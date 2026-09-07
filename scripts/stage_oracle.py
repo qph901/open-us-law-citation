@@ -1,0 +1,256 @@
+"""Stage and checksum-pin an official oracle edition into the registry.
+
+COV-1A separates a *selected* oracle (a URL + date in ``oracles/<snapshot>.json``
+with ``local_path``/``sha256`` still null) from a *pinned* one. A pin exists only
+after the **complete** official bytes have been fetched, verified, and hashed —
+never from an unverified URL, a partial transfer, or a moving ``current`` response
+(see ``DATA.md``). This tool performs that staging with the same verify-before-record
+discipline as :mod:`scripts.download`: it writes ``local_path``/``sha256`` back into
+the registry **only** after every expected byte is present and parseable.
+
+Two edition kinds, matching the two hashing methods in
+:func:`open_us_law_coverage.coverage_baseline.oracle_source_sha256`:
+
+* **USLM** (USC): a single official artifact (the release-point ``.zip`` of per-title
+  USLM XML, or one XML file) → ``sha256_bytes_v1``. The registry ``source_url`` is the
+  release-point ``.htm`` index, so point ``--url`` at the actual bulk ZIP.
+* **eCFR** (CFR): a directory of unmodified point-in-time versioner XML responses, one
+  per title, fetched from the ``…/full/<date>/title-{title}.xml`` template →
+  ``sha256_tree_v1``.
+
+The operator runs this (it performs the official-government downloads); a fake
+``fetcher`` makes the logic hermetically testable.
+
+    uv run python scripts/stage_oracle.py \
+        --oracle-manifest oracles/v2026.08.json \
+        --edition oracle:ecfr:point-in-time:2026-08-26 \
+        --out data/oracles/ecfr-2026-08-26 --titles 1-50
+
+    uv run python scripts/stage_oracle.py \
+        --oracle-manifest oracles/v2026.08.json \
+        --edition oracle:uslm:usc-pl-118-274-not-118-159:2025-01-06 \
+        --out data/oracles/uslm-usc-118-274not159.zip \
+        --url https://uscode.house.gov/download/releasepoints/us/pl/118/274not159/usc-rp@118-274not159.zip
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import urllib.request
+import zipfile
+from pathlib import Path
+from typing import Callable
+from xml.etree import ElementTree as ET
+
+from open_us_law_coverage.coverage_baseline import oracle_source_sha256
+from open_us_law_coverage.oracle_manifest import OracleKind, load_oracle_manifest
+
+# A fetcher maps an https URL to its raw response bytes. The default hits the
+# network; tests inject a fake so no official download is required.
+Fetcher = Callable[[str], bytes]
+
+_USER_AGENT = "open-us-law-coverage/COV-1A oracle-stager"
+
+
+def http_fetch(url: str, *, timeout: float = 120.0) -> bytes:
+    """Fetch one https URL to bytes. https-only, matching the registry invariant."""
+    if not url.startswith("https://"):
+        raise ValueError(f"refusing to fetch non-https URL: {url!r}")
+    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 (https-only)
+        return response.read()
+
+
+def parse_title_spec(spec: str) -> list[int]:
+    """Parse a title spec like ``1-50`` or ``1,2,5-9`` into a sorted unique list."""
+    titles: set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            low_s, high_s = part.split("-", 1)
+            low, high = int(low_s), int(high_s)
+            if low > high:
+                raise ValueError(f"inverted title range: {part!r}")
+            titles.update(range(low, high + 1))
+        else:
+            titles.add(int(part))
+    if not titles:
+        raise ValueError("no titles selected")
+    return sorted(titles)
+
+
+def _require_valid_xml(name: str, data: bytes) -> None:
+    """Reject an empty body or an HTML error page masquerading as the source XML."""
+    if not data.strip():
+        raise ValueError(f"{name}: empty response — refusing to stage a zero-byte oracle")
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError as exc:
+        head = data[:80].decode("utf-8", "replace")
+        raise ValueError(f"{name}: response is not well-formed XML ({exc}); starts {head!r}")
+    # A common failure is a well-formed *HTML* error page (200-with-body, or a
+    # soft 404). Legal source XML never has an <html> root, so reject it rather than
+    # certify an error page as the oracle.
+    if root.tag.rsplit("}", 1)[-1].casefold() == "html":
+        raise ValueError(f"{name}: response is an HTML document, not source XML")
+
+
+def ecfr_title_url(template: str, title: int) -> str:
+    """Substitute a title number into the versioner ``…/title-{title}.xml`` template."""
+    if "{title}" not in template:
+        raise ValueError("eCFR source_url must contain a '{title}' placeholder")
+    return template.replace("{title}", str(title))
+
+
+def stage_ecfr(
+    template: str,
+    titles: list[int],
+    out_dir: Path,
+    fetcher: Fetcher,
+) -> list[Path]:
+    """Fetch every requested title's point-in-time XML into ``out_dir``.
+
+    Each response is validated as well-formed XML before it is written, so a partial
+    corpus or an error page can never reach the hash step. Returns the staged paths.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    staged: list[Path] = []
+    for title in titles:
+        url = ecfr_title_url(template, title)
+        name = f"title-{title}.xml"
+        data = fetcher(url)
+        _require_valid_xml(name, data)
+        path = out_dir / name
+        path.write_bytes(data)
+        staged.append(path)
+    return staged
+
+
+def stage_uslm(url: str, out_path: Path, fetcher: Fetcher) -> Path:
+    """Fetch a single USLM artifact (release ZIP or one XML) to ``out_path``.
+
+    Validates the payload is a ZIP or well-formed XML — not the ``.htm`` release-point
+    index or an error page — before it can be hashed.
+    """
+    data = fetcher(url)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(data)
+    if zipfile.is_zipfile(out_path):
+        with zipfile.ZipFile(out_path) as archive:
+            if not any(n.casefold().endswith(".xml") for n in archive.namelist()):
+                raise ValueError(f"{out_path.name}: ZIP contains no XML members")
+        return out_path
+    _require_valid_xml(out_path.name, data)
+    return out_path
+
+
+def pin_edition(
+    manifest_path: Path,
+    edition_id: str,
+    local_path: Path,
+    sha256: str,
+) -> None:
+    """Write ``local_path`` + ``sha256`` into the registry edition, byte-stably.
+
+    Loads the raw JSON, sets exactly the two fields on the matching edition, and
+    re-validates the whole registry through :func:`load_oracle_manifest` (so the
+    both-set-or-both-null invariant and sha format are enforced) before overwriting
+    the file with 2-space indentation and a trailing newline.
+    """
+    raw = json.loads(manifest_path.read_text())
+    editions = raw.get("oracle_editions", [])
+    matches = [e for e in editions if e.get("oracle_edition") == edition_id]
+    if not matches:
+        raise SystemExit(f"edition {edition_id!r} not found in {manifest_path}")
+    if len(matches) > 1:
+        raise SystemExit(f"edition {edition_id!r} is not unique in {manifest_path}")
+    matches[0]["local_path"] = local_path.as_posix()
+    matches[0]["sha256"] = sha256
+    serialized = json.dumps(raw, indent=2) + "\n"
+    # Round-trip through the validated loader before touching the file on disk.
+    tmp = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
+    tmp.write_text(serialized)
+    try:
+        load_oracle_manifest(tmp)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    tmp.replace(manifest_path)
+
+
+def stage(
+    manifest_path: Path,
+    edition_id: str,
+    out: Path,
+    *,
+    titles: list[int] | None = None,
+    url: str | None = None,
+    fetcher: Fetcher = http_fetch,
+    overwrite: bool = False,
+) -> tuple[str, str]:
+    """Stage one edition end to end and pin it. Returns ``(sha256, method)``.
+
+    Refuses to overwrite an already-pinned edition or an existing output path unless
+    ``overwrite`` is set — a re-run must be a deliberate act, never a silent reshuffle
+    of what a checksum certifies.
+    """
+    manifest = load_oracle_manifest(manifest_path)
+    edition = next((e for e in manifest.editions if e.oracle_edition == edition_id), None)
+    if edition is None:
+        raise SystemExit(f"edition {edition_id!r} not found in {manifest_path}")
+    if edition.staged and not overwrite:
+        raise SystemExit(
+            f"edition {edition_id!r} is already pinned (local_path/sha256 set). "
+            f"Pass --overwrite to re-stage."
+        )
+    if out.exists():
+        if not overwrite:
+            raise SystemExit(f"output {out} already exists. Pass --overwrite to replace.")
+        if out.is_dir():
+            shutil.rmtree(out)
+        else:
+            out.unlink()
+
+    if edition.kind == OracleKind.ECFR:
+        if not titles:
+            raise SystemExit("eCFR staging requires --titles (e.g. 1-50)")
+        template = url or edition.source_url
+        stage_ecfr(template, titles, out, fetcher)
+    else:  # USLM
+        source = url or edition.source_url
+        stage_uslm(source, out, fetcher)
+
+    sha256, method = oracle_source_sha256(out)
+    pin_edition(manifest_path, edition_id, out, sha256)
+    return sha256, method
+
+
+def main(argv: list[str] | None = None) -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--oracle-manifest", type=Path, required=True)
+    ap.add_argument("--edition", required=True, help="oracle_edition id to stage")
+    ap.add_argument("--out", type=Path, required=True,
+                    help="output directory (eCFR) or file (USLM), under gitignored data/")
+    ap.add_argument("--titles", default=None,
+                    help="eCFR only: title spec, e.g. '1-50' or '1,2,5-9'")
+    ap.add_argument("--url", default=None,
+                    help="override the fetch URL (e.g. the USLM release ZIP; the "
+                         "registry source_url is the .htm index)")
+    ap.add_argument("--overwrite", action="store_true")
+    args = ap.parse_args(argv)
+    titles = parse_title_spec(args.titles) if args.titles else None
+    sha256, method = stage(
+        args.oracle_manifest, args.edition, args.out,
+        titles=titles, url=args.url, overwrite=args.overwrite,
+    )
+    print(f"pinned {args.edition}", flush=True)
+    print(f"  local_path: {args.out.as_posix()}", flush=True)
+    print(f"  sha256:     {sha256}  ({method})", flush=True)
+
+
+if __name__ == "__main__":
+    main()
