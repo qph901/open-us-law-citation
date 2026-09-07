@@ -27,6 +27,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         identity_manifest_main(raw_args[1:])
         return 0
+    if raw_args and raw_args[0] == "coverage-baseline":
+        from .coverage_baseline import main as coverage_baseline_main
+
+        coverage_baseline_main(raw_args[1:])
+        return 0
 
     parser = argparse.ArgumentParser(
         prog="open-us-law-coverage",
@@ -36,8 +41,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("ca-probe", "identity-manifest"),
-        help="ca-probe or identity-manifest (append --help for command options)",
+        choices=("ca-probe", "identity-manifest", "coverage-baseline"),
+        help="analysis command (append --help for command options)",
     )
     parser.parse_args(raw_args)
     parser.print_help()

@@ -1,8 +1,8 @@
-# Proposal: Citation Parser & Resolver for Open US Law (parser-first, USC-commissioned)
+# Proposal: Measurable Open US Law Coverage & Retrieval (coverage-first, federally commissioned)
 
 ## Summary
 
-Build a **citation detection / parsing / normalization / resolution** subsystem over the `vaquill/open-us-law` dataset (snapshot **v2026.08**), commissioned on the US Code (USC) and validated against edition-pinned USLM XML. This is the **hard foundation** of a legal RAG system. Retrieval and generation come *after* we can reliably identify what law a citation refers to, with an auditable explanation.
+Build a **broad, measurable, date-pinned law-coverage and retrieval system** over the `vaquill/open-us-law` dataset (snapshot **v2026.08**), commissioned federally against edition-pinned USLM/GovInfo for USC and point-in-time eCFR for CFR. Citation detection, parsing, normalization, and resolution remain load-bearing correctness capabilities, but they serve the primary objective: knowing which applicable law is represented accurately, which is missing or stale, and what can be retrieved safely. Retrieval optimization comes only after correctness is measured against official denominators.
 
 The guiding rule for the whole system: **uncertainty about legal identity must be represented as data, never hidden inside ID-generation code.** The system must be able to say "these are the same provision," "strong evidence this was renumbered into that," or "cannot reliably establish continuity" — and keep those as materially different claims.
 
@@ -13,17 +13,39 @@ The architecture that serves that rule is a **two-layer source/interpretation sp
 
 Every annotation carries its own `DerivedArtifactProvenance` (a multi-input DAG — see Data contracts) and can be regenerated without ever rewriting the source record. This gives uncertainty an explicit home and lets parsers improve without churning provenance.
 
-**Status:** M0 (reconnaissance), **M0.5A/M0.5A.1**, **M1A (the immutable `CanonicalSourceRecord` core)**, **M0.5B2/M0.5B3**, and **M1A.5 (the shared derived-artifact foundation — now CLOSED: corrected+frozen contracts with `payload_hash`/D2 and the `SourceIdentityGroup`+member/D1 shape, the concrete `SourceIdentityStrategy` producers built, evidence recommissioned incl. `reports/M1A5_identity_manifest.md`)** are **complete** — see the reports under `reports/` and `src/open_us_law_coverage/`. The source-identity contract froze with the *snapshot-observed ordinal* caveat from M0.5A.1. The next build phase is the **CFR assembly layer** (CFR-A1 commissioning → CFR-A2 `cfr_source_assembly_v1` producer — the only unbuilt derived producer) and the **M0.5B1** anatomy spike (parallel), ending at the **M1B** semantic freeze → **M0.5C** (disposition extraction). This document is the single source of technical truth; it carries the design decisions converged during review — including the M1A.5/CFR/M0.5B review that folded assembly into the identity boundary and the D1–D4 residual deltas — and supersedes any earlier sequencing and any one-record `ingest → CanonicalLegalDocument` framing. Project-level priorities are recorded in `PRIORITIES.md`. **One architecture only.**
+**Status:** M0 (reconnaissance), **M0.5A/M0.5A.1**, **M1A (the immutable `CanonicalSourceRecord` core)**, **M0.5B2/M0.5B3**, and **M1A.5 (the shared derived-artifact foundation — now CLOSED: corrected+frozen contracts with `payload_hash`/D2 and the `SourceIdentityGroup`+member/D1 shape, the concrete `SourceIdentityStrategy` producers built, evidence recommissioned incl. `reports/M1A5_identity_manifest.md`)** are **complete** — see the reports under `reports/` and `src/open_us_law_coverage/`. The source-identity contract froze with the *snapshot-observed ordinal* caveat from M0.5A.1. The next milestone is **COV-1A, the date-pinned federal provision-coverage baseline**: establish official USC/CFR denominators and provision-level crosswalks, then use the observed gaps to drive the CFR assembly and USC anatomy spikes. This document is the single source of technical truth; it carries the design decisions converged during review — including the M1A.5/CFR/M0.5B review that folded assembly into the identity boundary and the D1–D4 residual deltas — and supersedes any earlier sequencing and any one-record `ingest → CanonicalLegalDocument` framing. Project-level tradeoffs are governed by `PRIORITIES.md`. **One architecture only.**
 
 ---
 
-## First success criterion (the thing to prove before any embeddings)
+## Ordered project outcomes
 
-> Given any supported USC citation — appearing either as a user query or inside another legal section — the system can **detect** it, **parse** it into structured components, **normalize** it, **resolve** it to the correct Open US Law provision, and produce an **auditable explanation** of how the resolution was obtained.
+`PRIORITIES.md` governs roadmap and optimization decisions. A lower-priority outcome must not be improved by making a higher-priority outcome materially worse.
 
-With measured, version-pinned, USLM-backed: detection precision/recall, parsing accuracy, resolution top-1 accuracy, ambiguity rate, and unresolved rate.
+### 1. First success criterion — law coverage
 
-If we prove this before introducing embeddings, we have built the difficult part rather than another vector-search pipeline.
+> For each supported jurisdiction, corpus, and legal-content cutoff, the system can compare Open US Law provision-by-provision with a pinned official inventory and report what applicable law is represented accurately, missing, stale, duplicated, ambiguous, or unexpected — with auditable oracle provenance.
+
+The first federal proof covers USC against edition-pinned USLM/GovInfo and codified CFR against point-in-time eCFR. It reports, separately by corpus and official cutoff:
+
+- expected official provisions and provisions represented;
+- missing, stale, duplicate, ambiguous, and unexpected provisions;
+- exact and normalized text agreement;
+- citation-resolution success, ambiguity, and unresolved rates; and
+- the edition, date, checksum, source, and matching method for the official oracle.
+
+File counts, row counts, and distinct-`act_id` counts are **inventory**, not coverage percentages. No headline coverage percentage is defensible without an official provision denominator. COV-1A establishes the denominator and structural/text baseline; COV-1B closes the federal coverage gate after assembly, anatomy, and exact-citation resolution can populate every required metric.
+
+### 2. Second success criterion — retrieval time
+
+> For law that passes the coverage gate, the system retrieves the correct provision quickly and reproducibly.
+
+Report exact-citation lookup and broader-search latency separately: p50/p95/p99, cold-start and warm-query latency, index-build time, index size, hardware, corpus size, and cache state. A latency sample qualifies only when the correct covered provision is returned. Faster retrieval never compensates for missing, stale, ambiguous, or incorrect law.
+
+### Correctness capability — citation resolution
+
+Given a supported USC or CFR citation — as a query or inside another legal section — the system must detect, parse, normalize, and resolve it to the correct covered provision with an auditable explanation. Detection precision/recall, parsing accuracy, top-1 resolution accuracy, ambiguity, unresolved, and `external` rates remain required inputs to the coverage gate; they are not the project's primary success measure by themselves.
+
+Engineering controls—automated tests, code coverage, linting, typing, reproducible reports, and CI—protect these outcomes but are not substitutes for them.
 
 ---
 
@@ -33,11 +55,11 @@ If we prove this before introducing embeddings, we have built the difficult part
 - Defined-term semantic graph (`DefinitionMention` / `DefinitionEdge`).
 - Authority-hierarchy / conflict reasoning (constitution vs statute, preemption, later-in-time).
 - Graph-RAG expansion.
-- Full 52-jurisdiction state coverage (federal pipeline must work end-to-end first).
+- Full official-denominator coverage across all 52 state/territorial jurisdictions (the federal USC/CFR coverage gate is commissioned first).
 - Automatic official-source URL recovery.
 - Complex court-rule / agency-guidance semantics.
 
-These are real and important; they belong in later layers, not the parser MVP.
+These are real and important; they belong in later layers, not the federal coverage MVP. State inventory may still be analyzed, but it must not be presented as a coverage percentage until compared provision-by-provision with pinned official sources.
 
 **Additional non-goals for the current (M0.5→M1) phase:** no embeddings/vector DB/reranker; no general state citation grammars; no full CA/state coverage (only a small CA commissioning sample runs end-to-end); no *resolved* `LineageEdge` before M3; no official-source URL recovery; no live/current USLM at runtime; **no renaming of `CanonicalLegalDocument` yet** (see Terminology).
 
@@ -47,8 +69,8 @@ These are real and important; they belong in later layers, not the parser MVP.
 
 1. **Accept the dataset terms.** `vaquill/open-us-law` is gated on Hugging Face; a human must accept conditions and provide an HF access token to the environment.
 2. **Pin the snapshot(s).** Confirm the exact snapshot in use (target: `v2026.08`) and record it. Retain the adjacent snapshot (`v2026.07`) — snapshot retention is a **correctness** dependency, not eval convenience (see Cross-cutting invariants).
-3. **Provide the USLM oracle.** Download OLRC USLM XML for the USC, **edition-pinned to the release at or before the snapshot's content date** (OLRC keys USC releases to public-law numbers) for M0.5B1. Record the exact USLM edition/date used.
-4. **Provide the eCFR oracle.** Acquire **edition-pinned eCFR** for the CFR-A1 commissioning set, matched to the v2026.08 content date — eCFR exposes point-in-time versions, so pin to the release at or before the snapshot, **not** "current." Record the edition/date as a provenance input. Both USLM and eCFR are **at most edition-pinned build-time oracles** (recorded as provenance inputs), never query-runtime dependencies.
+3. **Provide the USLM/GovInfo oracle.** Download OLRC USLM XML and the matching official USC inventory, **edition-pinned to the release at or before the snapshot's USC content cutoff** (OLRC keys USC releases to public-law numbers), for COV-1A and M0.5B1. Record the exact edition/date, checksum, source URL, expected-provision inventory, and any known title-level currency differences.
+4. **Provide the eCFR oracle.** Acquire a **point-in-time eCFR** inventory and text for the CFR corpus, matched to the v2026.08 CFR content cutoff — pin to an explicit historical date, **not** "current" — for COV-1A and CFR-A1. Record the date, checksum, source, expected-provision inventory, and title coverage as provenance inputs. Both USLM/GovInfo and eCFR are edition-pinned build-time/evaluation oracles, never query-runtime dependencies.
 5. **Confirm network access** for the agent's environment to Hugging Face, govinfo.gov, and eCFR (or stage the files locally). Confirm both oracles are staged locally before the milestones that consume them.
 6. **Point at the existing codebase** if this extends prior marker-class parsing work; adapt conventions accordingly rather than starting greenfield.
 
@@ -458,22 +480,28 @@ query → dense retrieval                                       (natural-languag
 
 ---
 
-## Evaluation harness (four stages, no single "accuracy" number)
+## Evaluation harness (coverage first; no single "accuracy" or latency number)
 
-Report **precision AND recall**, broken down **by jurisdiction, corpus, reference type, parser method, and resolver method**. Aggregate accuracy is not acceptable — a parser can score 99% overall and be unusable for several small jurisdictions.
+Every result is broken down by **jurisdiction, corpus, and legal-content cutoff**. Citation results additionally split by reference type, parser method, and resolver method. Aggregate accuracy is not acceptable — a parser can score 99% overall and still hide missing law or be unusable for a smaller corpus.
 
 | Stage | Question | Metrics |
 |---|---|---|
+| 0. Official coverage | Which applicable official provisions and text are represented? | expected, represented, missing, stale, duplicate, ambiguous, unexpected; exact/normalized text agreement; oracle provenance |
 | A. Detection | Did we find that a reference exists? | precision, recall, F1 |
 | B. Parsing | Did we extract jurisdiction/corpus/title/chapter/section/subsection correctly? | field accuracy, exact-parse accuracy |
-| C. Resolution | Did the parsed cite map to the correct `legal_id`/document? | top-1 accuracy, Recall@K, ambiguity rate, unresolved rate |
+| C. Resolution | Did the parsed cite map to the correct covered `legal_id`/document? | top-1 accuracy, Recall@K, ambiguity rate, unresolved rate |
 | D. Version/Temporal | Correct snapshot/version/status for the question? | version-selection accuracy, status-selection accuracy |
+| E. Retrieval time | How quickly was the correct covered provision returned? | exact vs broader-search p50/p95/p99; cold/warm; build time; index size; hardware/corpus/cache context |
 
 Separate **`external` (correct out-of-corpus)** from **`unresolved` (resolver failed)** in Stage C, or the corpus's known holes (GA/NC withdrawn, regulations in a subset of jurisdictions) will masquerade as parser errors.
 
 **Anatomy metrics are asymmetric** (false-stripping law ≫ leaving a note in): report operative-text **retention recall** first, then editorial-contamination rate, boundary exact-match rate, boundary-distance distribution, and unmatched-span counts on both sides.
 
 **Oracle discipline:** validate USC against the **edition-pinned** USLM. Record the USLM edition/date. Do **not** compare v2026.08 against a newer official corpus and score legitimate amendments as parser errors; where exact alignment is impossible, measure and report the residual skew.
+
+**Coverage denominator discipline:** the official provision inventory is the denominator. Dataset rows/files are the numerator-side inventory only. A provision that cannot be matched confidently is `ambiguous`, not silently counted as represented; a dataset-only provision is `unexpected` until explained; and different oracle cutoffs are reported separately rather than blended.
+
+**Retrieval benchmark discipline:** measure exact-citation lookup separately from broader search, with p50/p95/p99, cold and warm states, index-build time/size, hardware, corpus size, and cache state. Exclude incorrect answers from the latency success population and report them as correctness failures; do not trade coverage or correctness for a faster percentile.
 
 ---
 
@@ -522,8 +550,24 @@ Build the shared derived-artifact contracts once, so every downstream annotation
 
 **Evidence (Phase C).** The snapshot pin is established **by checksum** (D4 — `SNAPSHOT_REVISIONS["v2026.08"]` matches all 229 staged files' sha256), the CA probe re-runs on the real producers (`reports/M0.5B3_ca_abstraction.md`), and the **full-snapshot identity manifest** (`src/open_us_law_coverage/identity_manifest.py` → `reports/M1A5_identity_manifest.md`) is the scale evidence + next-snapshot regression fixture. It measured that `act_id` collisions are a **regulations** phenomenon and **not federal-only** (state administrative-code files collide too — hence `state_regulation_v1`); 94% of ~2.8M groups are single-member 1:1; multi-row CFR is **1,083 groups** (consistent with decision B); FR is 165k ambiguous groups; max group size 14.
 
+### COV-1A — official federal denominator + provision baseline *(IN PROGRESS)*
+
+Establish the first provision-level comparison of Open US Law v2026.08 with pinned official federal inventories:
+
+- **USC:** edition-pinned USLM/GovInfo, with title-level currency recorded where the official release is not uniform;
+- **CFR:** point-in-time eCFR at an explicit historical cutoff; and
+- **Federal Register:** reported separately as promulgation records, never included in the codified-CFR denominator.
+
+Build deterministic crosswalks from each official provision to zero, one, or multiple Open US Law candidates. Report separately by jurisdiction (`US`), corpus, title, and legal-content cutoff: expected, represented, missing, stale, duplicate, ambiguous, and unexpected provisions; exact and normalized text agreement; unmatched official and dataset-only examples; and complete oracle provenance. Inventory totals from M0 remain useful context but are never labeled coverage.
+
+**Exit:** byte-stable USC and CFR coverage-baseline reports with official denominators and machine-readable discrepancy manifests. COV-1A may mark metrics `pending` where CFR multi-row assembly or USC anatomy is required for a fair text comparison; it must not coerce those cases to matches. Its discrepancy strata select the CFR-A1 and M0.5B1 samples, making those spikes coverage-driven rather than heuristic-driven.
+
+**Not yet the full priority exit:** citation-resolution coverage remains pending until the federal exact-citation resolver exists. The complete coverage gate closes at COV-1B.
+
+**Started:** the checksum-gated official-inventory projection, deterministic `(US, corpus, title, section)` crosswalk, structural/currency/text classifications, Federal Register exclusion, and byte-stable JSON/Markdown renderers are implemented in `src/open_us_law_coverage/coverage_baseline.py`, with hermetic acceptance fixtures in `tests/test_coverage_baseline.py`. See `reports/COV-1A_status.md` for the metric contract and reproduction path. Real scorecards remain pending until the complete official source bytes are staged and checksum-pinned; no provisional row-based coverage number is emitted.
+
 ### CFR-A1 — CFR assembly commissioning spike
-Bounded (a deterministic sample, ~a few hundred groups — *not* a milestone). Cover the hard cases: byte-identical duplicates; obvious two-row continuations; >2-row groups; distinct co-numbered rows with no continuation; list/table boundaries; punctuation edge cases; partial/full variants. Validate the proposed assembly against **snapshot-aligned eCFR** (a build-time oracle).
+Bounded (a deterministic sample, ~a few hundred groups — *not* a milestone). Draw the sample from COV-1A discrepancy strata and cover the hard cases: byte-identical duplicates; obvious two-row continuations; >2-row groups; distinct co-numbered rows with no continuation; list/table boundaries; punctuation edge cases; partial/full variants. Validate the proposed assembly against the **same point-in-time eCFR edition used as COV-1A's denominator**.
 **Metrics:** continuation-classification precision & recall; duplicate-classification precision; exact and normalized assembled-text match; ambiguous-group rate; **partial-law rate**; and — driving decision B — the **abstention rate on multi-row CFR groups**.
 **Hard failure (zero tolerance):** an assembly marked `complete` whose text is missing operative provision text.
 
@@ -532,7 +576,7 @@ Pure **snapshot-internal** assembly (continuation signal + physical row order + 
 **Eligibility invariant:** a CFR section is returned as complete authority only if it is a proven single-record section **or** `assembly_status = complete`. Otherwise abstain or mark evidence incomplete (return `source_url`, not half a section). **Returning half a regulation under the whole-section citation is unacceptable.**
 
 ### M0.5B1 — USC anatomy (USLM-aligned)
-**First step, before any metric:** decide USLM's role — *runtime join* (pin `USLM_edition` as a regeneration input / fold into producer version) vs *eval-only* (heuristic runtime detection, USLM measures it). This choice defines whether `operative_text_hash` honors the two-input contract and therefore what the spike measures. USLM is an **eval-only oracle** by default (the production parser runs from `raw_text` + parser version, preserving the two-input reproducibility contract). The experiment is **alignment, not heading-regex**: map USLM structured elements → expected flattened representation → align with Open US Law text → derive USLM-grounded span labels. Taxonomy follows USLM concepts (operative provision, source credit, editorial/statutory/codification notes, amendments, disposition, other).
+**First step, before any metric:** decide USLM's role — *runtime join* (pin `USLM_edition` as a regeneration input / fold into producer version) vs *eval-only* (heuristic runtime detection, USLM measures it). This choice defines whether `operative_text_hash` honors the two-input contract and therefore what the spike measures. USLM is an **eval-only oracle** by default (the production parser runs from `raw_text` + parser version, preserving the two-input reproducibility contract). The experiment is **alignment, not heading-regex**: map USLM structured elements → expected flattened representation → align with Open US Law text → derive USLM-grounded span labels. Taxonomy follows USLM concepts (operative provision, source credit, editorial/statutory/codification notes, amendments, disposition, other). Select the commissioning sample from COV-1A's USC mismatch strata so anatomy work targets measured coverage/text-agreement failures.
 **Exit — metrics split by consequence:**
 - **HARD GATE** — `catastrophic_strip_count == 0` (no clearly-operative text omitted) and operative-text retention recall. A single catastrophic strip **blocks promotion** of that anatomy parser version.
 - **QUALITY** — editorial-contamination rate into the operative body, alignment coverage, exact-boundary rate, unmatched OUL text, unmatched USLM material — on a USLM-aligned sample plus a manually-reviewed gold subset; `raw` vs `operative` change-rate measured across the v2026.07→v2026.08 transition.
@@ -562,13 +606,21 @@ Consume anatomy's codification/disposition spans (not raw text) → produce **un
 With A.1, B1, B2, B3, C reported, freeze `CanonicalLegalDocument` and the derived-artifact interfaces. Freeze **lineage types** (`LineageEdge`, `LineageEvidence`, `relationship_type`, `resolution_status`) with **zero rows** permitted.
 **Acceptance:** golden-fixture invariants for the derived layer; `legal_id`/`source_record_id`/`chunk_id` deterministic; every chunk maps to exactly one parent; character offsets resolve to correct text; missing metadata stays missing.
 
-### M2 — USC citation detector + parser
-Deterministically turn `42 U.S.C. § 1983` and its variants into structured `ReferenceMention`s. No embeddings.
-**Acceptance:** Stage A + B metrics on a hand-labeled USC set meet baseline thresholds set after M0.5 (record the numbers; set targets, don't hardcode as "legal rules").
+### M2 — Federal exact-citation detector + parser
+Deterministically turn USC citations (`42 U.S.C. § 1983`) and CFR citations (`17 CFR 240.10b-5`) plus their supported variants into structured `ReferenceMention`s. No embeddings.
+**Acceptance:** Stage A + B metrics reported separately for USC and CFR on hand-labeled sets; baseline thresholds are set after commissioning and recorded as empirical targets, not hardcoded as legal rules.
 
-### M3 — USC resolver + alias index + USLM validation
-Resolve citation → correct Open US Law row via canonical/alias lookup; build the exact-citation index; validate against edition-pinned USLM.
-**Acceptance:** Stage C metrics (top-1, ambiguity, unresolved, external correctly separated) on the USLM-backed set; satisfies the First Success Criterion end-to-end with auditable explanations.
+### M3 — Federal resolver + alias index + official validation
+Resolve USC and CFR citations to the correct covered `legal_id` via canonical/alias lookup; build the exact-citation index; validate against the same edition-pinned USLM/GovInfo and point-in-time eCFR oracles used by COV-1A.
+**Acceptance:** Stage C metrics reported separately for USC and CFR (top-1, ambiguity, unresolved, and external correctly separated), with auditable explanations and no credit for resolving to a stale or text-mismatched provision.
+
+### COV-1B — federal law-coverage gate
+Rerun the provision-level USC and CFR crosswalk after CFR-A2, M0.5B1, M2, and M3. Report the complete coverage scorecard required by `PRIORITIES.md`: expected and represented; missing, stale, duplicate, ambiguous, and unexpected; exact and normalized text agreement; citation-resolution success, ambiguity, and unresolved rates; and oracle provenance. Never blend different legal-content cutoffs.
+**Exit:** the first defensible, date-pinned federal coverage report and machine-readable discrepancy manifests. Every remaining gap is classified and becomes roadmap input; no dataset row/file total is presented as a coverage percentage.
+
+### RET-1 — correctness-qualified retrieval benchmark
+Benchmark exact-citation lookup separately from broader sparse search over the COV-1B-qualified federal corpus. Record p50/p95/p99, cold and warm runs, build time, index size, hardware, corpus size, and cache state.
+**Acceptance:** latency qualifies only when the correct provision and applicable version are returned. Incorrect, ambiguous, stale, and missing results remain correctness failures and are not included in a successful-latency percentile.
 
 ### M3.5 — Resolve `LineageMention` → `LineageEdge`
 Disposition parsing becomes an early consumer/test of the resolver: resolve the extracted disposition targets into `LineageEdge`s.
@@ -578,9 +630,9 @@ Disposition parsing becomes an early consumer/test of the resolver: resolve the 
 Detect/resolve references inside section bodies; emit auditable `CitationGraphEdge`s (rule vs model distinguishable).
 **Acceptance:** for a sample, "why does §A cite §B?" is answerable from stored edge fields; extraction vs resolution metrics reported separately.
 
-### Later — CFR extension · State framework
-Extend detection/parsing/resolution to federal regulations (`17 CFR 240.10b-5`), then jurisdiction-specific state grammars + alias tables (high-quality jurisdictions first), only after federal works end-to-end.
-**Acceptance:** per-corpus / per-jurisdiction Stage A–C metrics at parity targets; abstain-rate tracked where hierarchy/ordering is weak.
+### Later — state coverage framework
+Rank state jurisdictions by coverage impact and official-source readiness, then add jurisdiction-specific provision denominators, parsers, and alias tables. A state enters the reported coverage total only after its official inventory, cutoff, and oracle provenance are pinned.
+**Acceptance:** per-jurisdiction Stage 0 and Stage A–C metrics with abstention tracked where hierarchy or ordering is weak; row/file totals are never substituted for official-denominator coverage.
 
 ---
 
@@ -597,21 +649,26 @@ M1A.5  DerivedArtifactProvenance(DAG, +payload_hash) + SourceIdentityGroup/Membe
    │      + DocumentClassificationAnnotation + QualityAnnotation(duplicate-only)
    │      + SourceDocumentAssembly(trivial_single_record_v2) + durable-FK test
    │
-   ├── CFR path:  identity groups CFR collisions → CFR-A1 commissioning (eCFR oracle)
-   │              → CFR-A2 cfr_source_assembly_v1  (eligibility invariant gates CFR retrieval)
+ COV-1A  pinned official USC/CFR denominators + provision crosswalk          ← IN PROGRESS
    │
-   └── (parallel) M0.5B1 anatomy · M0.5B2 hierarchy · M0.5B3 CA probe
+   ├── CFR discrepancy strata → CFR-A1 commissioning → CFR-A2 cfr_source_assembly_v1
+   │
+   └── USC mismatch strata → M0.5B1 anatomy; M0.5B2/M0.5B3 are COMPLETE
    │
 M0.5C  disposition → unresolved LineageMention
    │
 M1B  freeze semantic derived-artifact interfaces  (freeze lineage types with zero rows)
    │
-M2 detector/parser → M3 resolver/alias index → M3.5 resolve LineageMention → M4 in-body refs
+M2 federal detector/parser → M3 federal resolver/alias index
    │
-Later: CFR resolution (consumes assembled CFR text) · State framework
+COV-1B complete federal coverage gate → RET-1 correctness-qualified retrieval benchmark
+   │
+M3.5 resolve LineageMention → M4 in-body refs
+   │
+Later: state official-denominator coverage framework
 ```
 
-**Gate semantics (precise):** M0.5A.1 gated the *source-identity contract*, not raw ingestion; that contract is now frozen. The lossless M1A record serializer did not need to know how `legal_id` works. In M1A.5 the artifact *interfaces* co-land (they are independent), but the *producers* are ordered **identity-then-assembly**: the assembly producer composes over a `source_identity_key` group, so it runs after the identity strategy (`SourceIdentityGroup`) has grouped the CFR collision members (decision C). B and C need not block M1A.5; C must not start before B yields a trustworthy codification/disposition span. Do **not** freeze M1B until B1/B2/B3 and CFR-A1/A2 have reported.
+**Gate semantics (precise):** M0.5A.1 gated the *source-identity contract*, not raw ingestion; that contract is now frozen. The lossless M1A record serializer did not need to know how `legal_id` works. In M1A.5 the artifact *interfaces* co-land (they are independent), but the *producers* are ordered **identity-then-assembly**: the assembly producer composes over a `source_identity_key` group, so it runs after the identity strategy (`SourceIdentityGroup`) has grouped the CFR collision members (decision C). COV-1A will supply the measured discrepancy strata for CFR-A1 and B1 once the official source bytes are staged and the real crosswalk runs. C must not start before B yields a trustworthy codification/disposition span. Do **not** freeze M1B until B1/B2/B3 and CFR-A1/A2 have reported. COV-1A is a preliminary baseline, not the final coverage result; COV-1B closes only after federal resolution, and RET-1 follows that correctness gate.
 
 ---
 
@@ -621,7 +678,7 @@ A skeptical pass on the accreted design produced one cut, one scope-down, and fo
 
 **A. `SourceAssemblyPlan` vs `SourceDocumentAssembly` — collapsed into one.** We had split assembly into a *plan* (the KEEP/APPEND/IGNORE_DUPLICATE/… decision) and an *assembly* (the materialized text), on the theory the plan could be reviewed before materialization. That doesn't survive contact with the workflow: the anatomy validator runs on the **materialized candidate text**, not on a plan — there is no "validate the plan before materializing" step to hang a second artifact on. Operations, evidence, confidence, and status live as fields *on* `SourceDocumentAssembly`. Re-split later only if a human approval step appears; the fields already exist.
 
-**B. eCFR build-time-fallback trigger — default to pure snapshot-internal with abstention.** Only reconsider the eCFR-pinned build-time fallback if CFR-A1 abstains on **>50% of multi-row CFR groups**, and even then improve the internal heuristic first. Multi-row CFR is ~1,083 groups (~0.5% of ~220k CFR provisions), and abstention is a *safe* outcome (returns `source_url`, never partial law), so recovering a fraction of a fraction does not justify a build-time external dependency until the heuristic is demonstrably not working.
+**B. eCFR build-time-fallback trigger — default to pure snapshot-internal with abstention.** Point-in-time eCFR is mandatory as the CFR coverage denominator and evaluation oracle; this decision governs only whether production assembly acquires a build-time external dependency. Reconsider that fallback if CFR-A1 abstains on **>50% of multi-row CFR groups**, and even then improve the internal heuristic first. Multi-row CFR is ~1,083 groups (~0.5% of ~220k CFR provisions), and abstention is a *safe* outcome (returns `source_url`, never partial law), so recovering a fraction of a fraction does not justify the dependency until the heuristic is demonstrably not working.
 
 **C. Identity vs assembly sequencing — interfaces co-land, producers are ordered.** The assembly *interface* lands in M1A.5 alongside identity (interfaces are independent). The assembly *producer* runs after the identity strategy has grouped the CFR collision members into a `SourceIdentityGroup`, since it composes over that group.
 
@@ -643,6 +700,8 @@ A second review pass settled four residual deltas. The milestone was **M1A.5 clo
 
 ## Cross-cutting invariants
 
+- **Law coverage is official-denominator and date-pinned.** No count of Open US Law rows, files, `act_id`s, identity groups, or assembled documents is a coverage percentage. Every coverage claim names the jurisdiction, corpus, legal-content cutoff, official source, and expected-provision denominator.
+- **Retrieval speed is correctness-qualified.** A latency measurement is a successful retrieval measurement only when the correct covered provision and applicable version are returned; incorrect, ambiguous, stale, and missing results remain correctness failures.
 - **Anatomy-as-derived holds only under three conditions:** (1) identity depends on nothing anatomy produces; (2) change-detection pins `(snapshot_version, anatomy_parser_version)` as a pair; (3) durable references anchor to source-level keys (the semantic and provenance anchors above; the durable-FK rule), never to anatomy-derived artifacts or to `source_identity_key`.
 - **Snapshot retention is a correctness dependency.** Retain adjacent Open US Law snapshots used for identity/amendment/lineage (`v2026.07`, `v2026.08` are the first fixtures). Over time, measure across multiple transitions: `P(act_id stable | ordinary amendment, corpus)`, `P(identity changed | renumbering, corpus)`, `P(raw_text changes | operative body unchanged)`. One transition is commissioning evidence, not a permanent guarantee.
 - **`cross_references_usc` is not yet a silver label.** The field-present rate is **not** a recall floor — true citation density is unknown. Before M4, build a small stratified hand-labeled citation set (rows with the field; rows with empty field but citation-shaped text; no-reference rows; long sections; operative-body vs editorial-note references; unusual forms) and independently measure dataset-field precision/recall and parser precision/recall. **"Parser finds a valid citation, field is empty" must never auto-count as a false positive.**
@@ -659,12 +718,14 @@ Version comparison at the **document** level (not chunk IDs). Pipeline: source-i
 
 ## MVP scope recap
 
-Lossless immutable source store · versioned identity/classification/quality annotations · derived canonical legal document (anatomy + hierarchy) · USC detection/parsing/normalization/exact resolution · citation alias index · lineage mentions → edges · USC/CFR cross-references where feasible · deterministic hierarchy-aware local resolution · structural subsection parsing with paths + offsets · whole-section default chunking with structural overflow · parser/resolver metrics · USLM validation.
+Date-pinned official USC/CFR provision denominators · reproducible coverage scorecards + discrepancy manifests · lossless immutable source store · versioned identity/classification/quality annotations · derived canonical legal document (anatomy + hierarchy) · federal detection/parsing/normalization/exact resolution · citation alias index · lineage mentions → edges · deterministic hierarchy-aware local resolution · structural subsection parsing with paths + offsets · whole-section default chunking with structural overflow · correctness-qualified exact and broader-search retrieval benchmarks · edition-pinned USLM/GovInfo and point-in-time eCFR validation.
 
 ---
 
 ## Guardrails
 
+- No percentage is labeled law coverage unless its official expected-provision denominator, jurisdiction, corpus, and legal-content cutoff are recorded.
+- No retrieval latency result qualifies as success for an incorrect, ambiguous, stale, or missing provision.
 - Status is snapshot-qualified: emit "in force as represented in Open US Law v2026.08," never "currently in force."
 - The LLM never constructs citations or source URLs from memory; application code assigns citation IDs; deterministic post-hoc validation checks every emitted citation exists, was actually provided, and quoted text is present in the cited source.
 - This is not legal advice; official source should be checked before reliance.
@@ -677,13 +738,15 @@ Reserve **"canonical"** for the immutable source representation. `CanonicalLegal
 
 ---
 
-## First action for Claude Code
+## Current execution order
 
 1. ~~Run **M0.5A.1**~~ **DONE** — `reports/M0.5A1_segment_provenance.md`. The source-identity contract froze with the *snapshot-observed ordinal* caveat (cross-snapshot stability untestable until a second regulations snapshot; `FR_*` rows are co-numbered distinct captures, so no reading order / no valid concatenation).
 2. ~~Build the **M1A immutable core** with the boundary test in its acceptance suite~~ **DONE** — `src/open_us_law_coverage/source_record.py` + `tests/test_source_record.py` (`uv run pytest`, boundary test green).
 3. Do **not** anchor any durable artifact FK to `source_identity_key`.
 4. ~~**Close M1A.5**~~ **DONE** — contracts corrected + frozen (D1 `SourceIdentityGroup`/`SourceIdentityMemberAnnotation`, D2 `payload_hash` + tripwire, uniform validation; D3 freeze-then-build), concrete identity producers built (`identity_strategies.py`), evidence recommissioned (checksum pin D4, CA probe re-run, `reports/M1A5_identity_manifest.md`). Only the CFR multi-row *composer* (`cfr_source_assembly_v1`) remains (CFR-A2).
-5. **Run CFR-A1** against snapshot-aligned eCFR (human-staged, edition-pinned); report the metrics, especially the multi-row-CFR **abstention rate** (drives decision B).
-6. **In parallel, start M0.5B1 / B2 / B3** (decide USLM runtime-vs-eval first for B1; respect the B→C dependency).
+5. **Continue COV-1A:** stage and pin the USLM/GovInfo and point-in-time eCFR provision inventories, record their cutoffs/checksums/provenance, run the implemented USC/CFR crosswalks, and emit the preliminary scorecards plus machine-readable discrepancy manifests.
+6. Use COV-1A's discrepancy strata to commission **CFR-A1** and **M0.5B1**; implement CFR-A2 and the promoted USC anatomy producer only after their hard gates pass. M0.5B2 and M0.5B3 are already complete.
+7. Complete M0.5C and freeze M1B only after B1/B2/B3 and CFR-A1/A2 have reported; then build the federal M2 detector/parser and M3 resolver.
+8. Rerun the official crosswalk as **COV-1B**, classify every remaining federal gap, and only then run the correctness-qualified **RET-1** exact/broader retrieval benchmark.
 
-Do not freeze `CanonicalLegalDocument` (M1B) until B1, B2, B3, and CFR-A1/A2 have also reported. The one hard rule: keep `source_record_id`, `raw_text_hash`, and `legal_id` orthogonal — `legal_id` derives from proven source identity alone, corrected additively, and durable FKs anchor to `source_record_id`, never to `source_identity_key`.
+Do not freeze `CanonicalLegalDocument` (M1B) until B1, B2, B3, and CFR-A1/A2 have reported. Do not call an inventory count "coverage," and do not call a fast wrong result retrieval success. Keep `source_record_id`, `raw_text_hash`, and `legal_id` orthogonal — `legal_id` derives from proven source identity alone, corrected additively, and durable FKs anchor to `source_record_id`, never to `source_identity_key`.

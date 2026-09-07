@@ -1,8 +1,10 @@
-# Open US Law — Citation Parser & Resolver
+# Open US Law — Measurable Coverage & Retrieval
 
-A citation detection / parsing / normalization / resolution subsystem over the
+A coverage-first, date-pinned law inventory and retrieval system over the
 [`vaquill/open-us-law`](https://huggingface.co/datasets/vaquill/open-us-law)
-dataset (snapshot **v2026.08**), commissioned on the US Code. See
+dataset (snapshot **v2026.08**), federally commissioned against official USC and
+CFR inventories. Citation parsing and resolution remain correctness capabilities
+inside that system. See
 [PROPOSAL.md](PROPOSAL.md) for the full design and milestones. Project decisions
 are ordered by [PRIORITIES.md](PRIORITIES.md): law coverage first, retrieval time
 second.
@@ -106,6 +108,16 @@ second.
   *distinct* provisions — content ≠ identity), and anatomy (B1) must carry a
   leading `[Repealed … and added by Stats. …]` history bracket and not trust
   `act_status`. **M0.5B1 (needs USLM) / CFR-A1 (needs eCFR): not started.**
+- **COV-1A — official federal provision baseline: in progress.** The first
+  buildable slice is in
+  [`src/open_us_law_coverage/coverage_baseline.py`](src/open_us_law_coverage/coverage_baseline.py):
+  checksum-gated USLM/eCFR provision inventories, deterministic zero/one/multiple
+  crosswalks, separate structural/currency/text outcomes, explicit Federal
+  Register exclusion, and byte-stable JSON/Markdown output. The implementation
+  status and metric definitions are in
+  [`reports/COV-1A_status.md`](reports/COV-1A_status.md). Real USC/CFR scorecards
+  remain pending until the complete official bytes are staged and pinned; no row
+  count is presented as coverage.
 
 ## Setup
 
@@ -129,6 +141,7 @@ The installed command exposes the maintained audit entry points:
 uv run open-us-law-coverage --help
 uv run open-us-law-coverage ca-probe --help
 uv run open-us-law-coverage identity-manifest --help
+uv run open-us-law-coverage coverage-baseline --help
 ```
 
 The project is licensed under Apache-2.0. Legal text in the upstream dataset is
@@ -165,6 +178,8 @@ The recon harness accepts any file glob, so it can be pointed at the full
   (breadcrumb → normalized `HierarchyNode[]` / `StructuralPath` + topology report).
 - `src/open_us_law_coverage/ca_probe.py` — M0.5B3 CA abstraction-falsification
   probe (runs the built artifact types over CA; emits the interface-change list).
+- `src/open_us_law_coverage/coverage_baseline.py` — COV-1A official-inventory
+  projection, provision crosswalk, discrepancy manifest, and scorecard renderer.
 - `tests/` — golden-fixture acceptance suite (`uv run pytest`).
 - `scripts/download.py` — gated download + SHA-256 verification.
 - `PRIORITIES.md` — authoritative product priorities and their measurement rules.

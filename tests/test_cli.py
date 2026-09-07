@@ -8,6 +8,7 @@ def test_cli_without_a_subcommand_prints_useful_help(capsys):
     output = capsys.readouterr().out
     assert "identity-manifest" in output
     assert "ca-probe" in output
+    assert "coverage-baseline" in output
     assert "Hello" not in output
 
 

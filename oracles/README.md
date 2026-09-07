@@ -34,3 +34,10 @@ results. The eCFR candidate is the official point-in-time API representation dat
 The external bytes are intentionally not represented as staged: this registry does
 not contain a checksum until a complete download succeeds. This avoids turning an
 unverified URL, partial transfer, or moving `current` response into provenance.
+
+For a single official XML or ZIP, `sha256` is the ordinary byte hash
+(`sha256_bytes_v1`). For a multi-title eCFR directory, keep every downloaded XML
+response unmodified and use `sha256_tree_v1`: hash each sorted relative UTF-8 path,
+a NUL byte, the 32 raw bytes of that file's SHA-256, and a final NUL byte into one
+edition digest. The normalized provision inventory records which method was used,
+and the comparison CLI re-hashes the staged source before emitting a baseline.
