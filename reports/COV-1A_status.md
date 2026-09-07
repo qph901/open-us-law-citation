@@ -108,7 +108,12 @@ legal-content cutoff; it will not substitute the repository commit date.
 
 - stage and checksum the complete OLRC USLM/GovInfo-aligned USC inventory;
 - stage all point-in-time eCFR titles for the explicit historical comparison date;
-- validate title/section projection totals against each official browse inventory;
+- validate title/section projection totals against each official browse inventory
+  (the CFR side is pre-measured in
+  [`COV-1A_ecfr_browse_counts.md`](COV-1A_ecfr_browse_counts.md): 220,536 active /
+  227,521 total official sections as of 2026-08-26 — the snapshot's 220,018 CFR rows
+  track the **active** count, so `_ecfr_provisions` must treat `reserved` sections as
+  their own stratum, not `missing`);
 - run both real v2026.08 crosswalks and inspect deterministic unmatched samples;
 - establish or retain pending CFR currency from comparison evidence; and
 - commit the byte-stable USC/CFR reports and discrepancy manifests.
