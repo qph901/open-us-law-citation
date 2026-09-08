@@ -72,6 +72,12 @@ class ArtifactType(StrEnum):
     # and a ``payload_hash`` — but it deliberately does NOT put the mutable key on the
     # content-addressed assembly: the key rides in this artifact's own body instead.
     ASSEMBLY_IDENTITY_ASSOCIATION = "assembly_identity_association"
+    # A parsed citation occurrence (M2, pre-resolution). A grammar turns a citation
+    # string into structured components; the mention anchors to the source record it
+    # was found in (a ``source_record`` edge) when in-body, or carries no edge when it
+    # is a standalone query. Resolution to a target ``legal_id`` is a separate artifact
+    # (M3), never folded in here.
+    REFERENCE_MENTION = "reference_mention"
 
 
 _EnumT = TypeVar("_EnumT", bound=StrEnum)

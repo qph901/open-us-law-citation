@@ -118,6 +118,18 @@ second.
   [`reports/COV-1A_status.md`](reports/COV-1A_status.md). Real USC/CFR scorecards
   remain pending until the complete official bytes are staged and pinned; no row
   count is presented as coverage.
+- **M2 — federal exact-citation parser (oracle-independent slice): started.**
+  [`src/open_us_law_coverage/citation_parser.py`](src/open_us_law_coverage/citation_parser.py):
+  a deterministic USC/CFR citation grammar (`usc_grammar_v1` / `cfr_grammar_v1`) →
+  structured `ParsedCitation` / `ReferenceMention` (pre-resolution; provenance on the
+  interpretation boundary). Resolution (M3), the alias index, and official validation are
+  out of scope. Started ahead of the M1B freeze because the parser needs no blocked
+  oracle bytes: the dataset's own `citation`/`citation_short` + structured
+  `title_number`/`section_number` are a full-corpus labeled set. Self-check at
+  [`reports/M2_parse_selfcheck.md`](reports/M2_parse_selfcheck.md) — **USC 100.00%
+  exact**, **CFR 99.31% correct** (the parser also recovers `title_number` where the flat
+  column is null); the only remaining strata are title-26 mid-subsection sections and 5
+  `(T)`-suffix rows.
 
 ## Setup
 
@@ -180,6 +192,8 @@ The recon harness accepts any file glob, so it can be pointed at the full
   probe (runs the built artifact types over CA; emits the interface-change list).
 - `src/open_us_law_coverage/coverage_baseline.py` — COV-1A official-inventory
   projection, provision crosswalk, discrepancy manifest, and scorecard renderer.
+- `src/open_us_law_coverage/citation_parser.py` — M2 federal exact-citation grammar
+  (USC/CFR → `ParsedCitation` / `ReferenceMention`) + dataset self-check harness.
 - `tests/` — golden-fixture acceptance suite (`uv run pytest`).
 - `scripts/download.py` — gated download + SHA-256 verification.
 - `PRIORITIES.md` — authoritative product priorities and their measurement rules.

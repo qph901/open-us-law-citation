@@ -32,6 +32,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         coverage_baseline_main(raw_args[1:])
         return 0
+    if raw_args and raw_args[0] == "citation-parser":
+        from .citation_parser import main as citation_parser_main
+
+        citation_parser_main(raw_args[1:])
+        return 0
 
     parser = argparse.ArgumentParser(
         prog="open-us-law-coverage",
@@ -41,7 +46,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("ca-probe", "identity-manifest", "coverage-baseline"),
+        choices=("ca-probe", "identity-manifest", "coverage-baseline", "citation-parser"),
         help="analysis command (append --help for command options)",
     )
     parser.parse_args(raw_args)
