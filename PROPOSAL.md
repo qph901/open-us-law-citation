@@ -610,6 +610,25 @@ With A.1, B1, B2, B3, C reported, freeze `CanonicalLegalDocument` and the derive
 Deterministically turn USC citations (`42 U.S.C. § 1983`) and CFR citations (`17 CFR 240.10b-5`) plus their supported variants into structured `ReferenceMention`s. No embeddings.
 **Acceptance:** Stage A + B metrics reported separately for USC and CFR on hand-labeled sets; baseline thresholds are set after commissioning and recorded as empirical targets, not hardcoded as legal rules.
 
+**M2 — Stage B (parser) COMPLETE; Stage A (detection) + full-milestone freeze still open.**
+Built in `src/open_us_law_coverage/citation_parser.py` (report `reports/M2_parse_selfcheck.md`,
+suite `tests/test_citation_parser.py`) — started **ahead of the M1B freeze** because the parser
+needs no blocked oracle bytes. Done: the deterministic USC/CFR grammar (`usc_grammar_v1` /
+`cfr_grammar_v3`) → `ParsedCitation` / `ReferenceMention` (pre-resolution; `ABSOLUTE`/`QUALIFIED`
+only; `DerivedArtifactProvenance` + `payload_hash` on the interpretation side of the boundary,
+`ArtifactType.REFERENCE_MENTION`), and the **Stage-B parse metric** measured not on a small
+hand-labeled set but on the dataset's *own* `citation`/`citation_short` against structured
+`title_number`/`section_number` at full-corpus scale — **USC 100.00% exact, CFR 100.00%, zero
+mismatches**, with the residue represented honestly (parser *recovers* a null `title_number`;
+14 CFR Part 241's dotless sections parse with `parsed_part=None` at reduced confidence; the only
+6 CFR non-parses are malformed source strings, correctly abstained). **Still open before M2 can
+be called complete:** (1) **Stage A** — in-body detection precision/recall on a hand-labeled set
+(only a minimal `detect_mentions` scan + hermetic fixtures exist; full in-body detection overlaps
+M4 and is deferred); (2) the milestone is **out of sequence** — `ReferenceMention` is provisional
+until the M1B freeze, and its acceptance thresholds are "empirical targets" to be recommissioned
+then; (3) resolution/alias/validation is **M3**, not this. So the grammar is production-usable now,
+but the M2 milestone stays **partially complete** until Stage A is measured and M1B freezes the type.
+
 ### M3 — Federal resolver + alias index + official validation
 Resolve USC and CFR citations to the correct covered `legal_id` via canonical/alias lookup; build the exact-citation index; validate against the same edition-pinned USLM/GovInfo and point-in-time eCFR oracles used by COV-1A.
 **Acceptance:** Stage C metrics reported separately for USC and CFR (top-1, ambiguity, unresolved, and external correctly separated), with auditable explanations and no credit for resolving to a stale or text-mismatched provision.
