@@ -37,6 +37,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         citation_parser_main(raw_args[1:])
         return 0
+    if raw_args and raw_args[0] == "in-body-detection":
+        from .in_body_detection import main as in_body_detection_main
+
+        in_body_detection_main(raw_args[1:])
+        return 0
 
     parser = argparse.ArgumentParser(
         prog="open-us-law-coverage",
@@ -46,7 +51,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("ca-probe", "identity-manifest", "coverage-baseline", "citation-parser"),
+        choices=(
+            "ca-probe", "identity-manifest", "coverage-baseline", "citation-parser",
+            "in-body-detection",
+        ),
         help="analysis command (append --help for command options)",
     )
     parser.parse_args(raw_args)
