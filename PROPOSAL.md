@@ -610,24 +610,30 @@ With A.1, B1, B2, B3, C reported, freeze `CanonicalLegalDocument` and the derive
 Deterministically turn USC citations (`42 U.S.C. § 1983`) and CFR citations (`17 CFR 240.10b-5`) plus their supported variants into structured `ReferenceMention`s. No embeddings.
 **Acceptance:** Stage A + B metrics reported separately for USC and CFR on hand-labeled sets; baseline thresholds are set after commissioning and recorded as empirical targets, not hardcoded as legal rules.
 
-**M2 — Stage B (parser) COMPLETE; Stage A (detection) + full-milestone freeze still open.**
-Built in `src/open_us_law_coverage/citation_parser.py` (report `reports/M2_parse_selfcheck.md`,
-suite `tests/test_citation_parser.py`) — started **ahead of the M1B freeze** because the parser
-needs no blocked oracle bytes. Done: the deterministic USC/CFR grammar (`usc_grammar_v1` /
-`cfr_grammar_v3`) → `ParsedCitation` / `ReferenceMention` (pre-resolution; `ABSOLUTE`/`QUALIFIED`
-only; `DerivedArtifactProvenance` + `payload_hash` on the interpretation side of the boundary,
-`ArtifactType.REFERENCE_MENTION`), and the **Stage-B parse metric** measured not on a small
-hand-labeled set but on the dataset's *own* `citation`/`citation_short` against structured
-`title_number`/`section_number` at full-corpus scale — **USC 100.00% exact, CFR 100.00%, zero
-mismatches**, with the residue represented honestly (parser *recovers* a null `title_number`;
-14 CFR Part 241's dotless sections parse with `parsed_part=None` at reduced confidence; the only
-6 CFR non-parses are malformed source strings, correctly abstained). **Still open before M2 can
-be called complete:** (1) **Stage A** — in-body detection precision/recall on a hand-labeled set
-(only a minimal `detect_mentions` scan + hermetic fixtures exist; full in-body detection overlaps
-M4 and is deferred); (2) the milestone is **out of sequence** — `ReferenceMention` is provisional
-until the M1B freeze, and its acceptance thresholds are "empirical targets" to be recommissioned
-then; (3) resolution/alias/validation is **M3**, not this. So the grammar is production-usable now,
-but the M2 milestone stays **partially complete** until Stage A is measured and M1B freezes the type.
+**M2 — Stage A + B COMMISSIONED; formal close deferred to the M1B freeze.**
+Built in `src/open_us_law_coverage/citation_parser.py` (reports `reports/M2_parse_selfcheck.md`
+and `reports/M2_detection_metrics.md`, suite `tests/test_citation_parser.py`) — started **ahead
+of the M1B freeze** because the parser needs no blocked oracle bytes. Done: the deterministic
+USC/CFR grammar (`usc_grammar_v1` / `cfr_grammar_v3`) → `ParsedCitation` / `ReferenceMention`
+(pre-resolution; `ABSOLUTE`/`QUALIFIED` only; `DerivedArtifactProvenance` + `payload_hash` on the
+interpretation side of the boundary, `ArtifactType.REFERENCE_MENTION`).
+- **Stage B (parsing)** measured not on a small set but on the dataset's *own*
+  `citation`/`citation_short` against structured `title_number`/`section_number` at full-corpus
+  scale — **USC 100.00% exact, CFR 100.00%, zero mismatches** — with the residue honest (parser
+  *recovers* a null `title_number`; 14 CFR Part 241 dotless sections parse `parsed_part=None` at
+  reduced confidence; the only 6 CFR non-parses are malformed source strings, correctly abstained).
+- **Stage A (detection)** measured as precision/recall over a **hand-labelled gold set** (28
+  passages, 23 citations, 9 adversarial distractors — dates, `$` amounts, `Rule 12(b)(6)`, Public
+  Law / Fed. Reg. numbers, version strings, phone numbers): **precision 1.000, recall 0.957, F1
+  0.978** (CFR 1.000/1.000; USC 1.000/0.929). Precision-first: zero false positives on any
+  distractor. The gold set caught a real free-text bug (the CFR section truncated `240.10b-5` →
+  `240.1` under `finditer`), now fixed and regression-tested. Baseline thresholds recorded as
+  empirical targets. The one recall gap is the 2nd+ member of an enumerated `§§ a, b` list; the
+  qualified prose form (`section 1983 of title 42`) and full corpus-scale in-body detection are
+  deferred (the latter overlaps M4).
+**Still open before M2 formally closes:** the milestone is **out of sequence** — `ReferenceMention`
+is provisional until the M1B freeze, and its thresholds are recommissioned then; resolution/alias/
+validation is **M3**, not this. The detector/parser is production-usable now.
 
 ### M3 — Federal resolver + alias index + official validation
 Resolve USC and CFR citations to the correct covered `legal_id` via canonical/alias lookup; build the exact-citation index; validate against the same edition-pinned USLM/GovInfo and point-in-time eCFR oracles used by COV-1A.

@@ -13,14 +13,19 @@ import pyarrow.parquet as pq
 import pytest
 
 from open_us_law_coverage.citation_parser import (
+    DETECTION_GOLD,
+    _DETECTION_MIN_PRECISION,
+    _DETECTION_MIN_RECALL,
     ParsedCitation,
     ReferenceType,
     analyze_file,
     build_reference_mention,
     detect_mentions,
+    detection_metrics,
     parse_cfr_citation,
     parse_citation,
     parse_usc_citation,
+    render_detection_report,
     render_report,
 )
 from open_us_law_coverage.coverage_baseline import FederalCorpus
@@ -242,6 +247,50 @@ def test_detect_no_double_count_cfr_as_usc():
     ms = detect_mentions("5 C.F.R. § 330.601")
     assert len(ms) == 1
     assert ms[0].parsed.parsed_corpus == FederalCorpus.CFR
+
+
+@pytest.mark.parametrize(
+    "text,section",
+    [
+        ("See 17 CFR 240.10b-5 for the rule.", "240.10b-5"),
+        ("Under 5 C.F.R. § 330.601 today.", "330.601"),
+        ("At 43 C.F.R. § 1864.0-3 and more.", "1864.0-3"),
+        ("Per 26 C.F.R. § 41.6151(a)-1 here.", "41.6151(a)-1"),
+    ],
+)
+def test_detect_does_not_truncate_cfr_section_in_free_text(text, section):
+    """Regression: in free-text scanning the CFR section was truncated (240.10b-5 -> 240.1)
+    because the alternation preferred the single-char branch; the greedy form fixes it."""
+    ms = detect_mentions(text)
+    assert len(ms) == 1
+    assert ms[0].parsed.parsed_section == section
+
+
+# --- Stage-A detection metrics (hand-labelled gold) -----------------------------
+
+
+def test_detection_meets_recorded_baseline():
+    metrics, fps, fns = detection_metrics()
+    # Precision is the hard, per-corpus requirement (precision-first design).
+    for key in ("USC", "CFR", "all"):
+        assert metrics[key].precision >= _DETECTION_MIN_PRECISION, (key, metrics[key].precision)
+    # Recall is measured overall; the one documented gap is an enumerated `§§` list member.
+    assert metrics["all"].recall >= _DETECTION_MIN_RECALL, metrics["all"].recall
+    assert fps == []  # never fire on a distractor
+
+
+def test_detection_no_false_positive_on_any_distractor():
+    for text, expected in DETECTION_GOLD:
+        if not expected:  # pure-distractor passage
+            assert detect_mentions(text) == [], text
+
+
+def test_detection_report_is_stable():
+    r1 = render_detection_report()
+    r2 = render_detection_report()
+    assert r1 == r2
+    assert "M2 citation-detector Stage-A metrics" in r1
+    assert "None — the detector fired on no distractor." in r1
 
 
 # --- Self-check harness (Stage-B metric on the dataset's own labels) -------------

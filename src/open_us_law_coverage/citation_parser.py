@@ -157,7 +157,7 @@ _USC_SECTION = r"(?P<section>\d+[A-Za-z]*(?:_\d+)?)"
 _USC_SUBSEC = r"(?P<subsection>(?:\([0-9A-Za-z]{1,4}\))+)?"
 _CFR_SECTION = (
     r"(?P<section>(?P<part>\d+[A-Za-z]?(?:-\d+[A-Za-z]?)*)"
-    r"\.(?:[0-9A-Za-z]|[0-9A-Za-z][0-9A-Za-z().\-]*[0-9A-Za-z)]))"
+    r"\.[0-9A-Za-z](?:[0-9A-Za-z().\-]*[0-9A-Za-z)])?)"
 )
 
 _USC_ABSOLUTE = re.compile(
@@ -675,15 +675,201 @@ def render_report(
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# Stage A — detection metrics on a hand-labelled gold set.
+#
+# The self-check above scores *parsing* on the dataset's own citations. Detection is a
+# different task: find citation spans inside free prose, and NOT fire on citation-shaped
+# noise. It is scored as precision/recall against a hand-curated gold set — realistic legal
+# sentences carrying USC/CFR citations, plus adversarial distractors (dates, dollar amounts,
+# Rule 12(b)(6), Public Law / Fed. Reg. numbers, version strings, phone numbers) whose gold
+# is empty. Matching is at the (corpus, title, section) identity level, so it measures "did
+# we find the right citation," independent of exact byte offsets (spans are checked in the
+# unit suite). Gold labels are independent ground truth, authored to be adversarial — never
+# derived from the detector's own output.
+# ---------------------------------------------------------------------------
+
+# Each entry: (passage, citations that SHOULD be detected). An empty tuple = a pure
+# distractor passage (any detection there is a false positive).
+_Cite = tuple[str, str, str]  # (corpus, title, section)
+DETECTION_GOLD: tuple[tuple[str, tuple[_Cite, ...]], ...] = (
+    ("The claim arises under 42 U.S.C. § 1983.", (("usc", "42", "1983"),)),
+    ("See 17 CFR 240.10b-5 for the antifraud rule.", (("cfr", "17", "240.10b-5"),)),
+    ("Both 42 U.S.C. § 1983 and 5 U.S.C. § 552 apply.",
+     (("usc", "42", "1983"), ("usc", "5", "552"))),
+    ("Attorney's fees under 42 U.S.C. § 1988(b) are available.", (("usc", "42", "1988"),)),
+    ("Exempt under 26 U.S.C. § 501(c)(3) rules.", (("usc", "26", "501"),)),
+    ("It violated 15 U.S.C. § 78j and 17 C.F.R. § 240.10b-5.",
+     (("usc", "15", "78j"), ("cfr", "17", "240.10b-5"))),
+    ("A proceeding under 42 USC 1983 without periods.", (("usc", "42", "1983"),)),
+    ("Citing 42 U.S.C.A. § 1983 (annotated reporter).", (("usc", "42", "1983"),)),
+    ("5 C.F.R. § 330.601 governs appointments.", (("cfr", "5", "330.601"),)),
+    ("See 43 C.F.R. § 1864.0-3 and nothing else.", (("cfr", "43", "1864.0-3"),)),
+    ("Compliance is required by 29 U.S.C. § 651.", (("usc", "29", "651"),)),
+    ("Emission limits in 40 C.F.R. § 60.4 apply here.", (("cfr", "40", "60.4"),)),
+    ("The provision at 41 C.F.R. § 101-6.2104 (FPMR) applies.", (("cfr", "41", "101-6.2104"),)),
+    ("Under 26 C.F.R. § 41.6151(a)-1 a deposit is required.", (("cfr", "26", "41.6151(a)-1"),)),
+    ("Compare 12 U.S.C. § 1811 with 12 C.F.R. § 330.1.",
+     (("usc", "12", "1811"), ("cfr", "12", "330.1"))),
+    ("As amended, 42 U.S.C. § 1983 (2018) still applies.", (("usc", "42", "1983"),)),
+    ("Brought under 42 U.S.C. §§ 1983, 1985 jointly.",
+     (("usc", "42", "1983"), ("usc", "42", "1985"))),
+    # --- adversarial distractors: nothing should be detected ---
+    ("Section 5 of the Agreement dated January 2024.", ()),
+    ("Public Law 118-274 amended the statute.", ()),
+    ("Published at 89 Fed. Reg. 12,345 (Feb. 1, 2024).", ()),
+    ("Rule 12(b)(6) of the Federal Rules of Civil Procedure.", ()),
+    ("The software version is 2.10, build 240.10.", ()),
+    ("The jury awarded $1,983 in damages plus interest.", ()),
+    ("A petition under Chapter 11 of the Bankruptcy Code.", ()),
+    ("Regulated under 40 CFR generally, with no section given.", ()),
+    ("Please call 1-800-555-1983 for assistance.", ()),
+    # --- mixed: one real citation alongside citation-shaped noise ---
+    ("Under 42 U.S.C. § 1983, not Section 5 of the lease, the claim lies.",
+     (("usc", "42", "1983"),)),
+    ("89 FR 100 announced the rule now codified at 42 C.F.R. § 480.138.",
+     (("cfr", "42", "480.138"),)),
+)
+
+# Empirical baseline targets recorded after commissioning (M2 acceptance: thresholds are
+# measured, not hardcoded legal rules). The detector is precision-first; the one known
+# recall gap is the 2nd+ member of an enumerated `§§ a, b` list.
+_DETECTION_MIN_PRECISION = 1.0
+_DETECTION_MIN_RECALL = 0.95
+
+
+@dataclass
+class DetectionMetrics:
+    corpus: str
+    tp: int = 0
+    fp: int = 0
+    fn: int = 0
+
+    @property
+    def precision(self) -> float:
+        return self.tp / (self.tp + self.fp) if (self.tp + self.fp) else 1.0
+
+    @property
+    def recall(self) -> float:
+        return self.tp / (self.tp + self.fn) if (self.tp + self.fn) else 1.0
+
+    @property
+    def f1(self) -> float:
+        p, r = self.precision, self.recall
+        return 2 * p * r / (p + r) if (p + r) else 0.0
+
+
+def _mention_key(m: ReferenceMention) -> _Cite:
+    return (m.parsed.parsed_corpus.value, m.parsed.parsed_title, m.parsed.parsed_section)
+
+
+def detection_metrics(
+    gold: tuple[tuple[str, tuple[_Cite, ...]], ...] = DETECTION_GOLD,
+) -> tuple[dict[str, DetectionMetrics], list[tuple[str, _Cite]], list[tuple[str, _Cite]]]:
+    """Score ``detect_mentions`` over ``gold``. Returns (per-corpus metrics incl. 'all',
+    false-positive examples, false-negative examples). Citation-identity matching."""
+    metrics = {k: DetectionMetrics(k) for k in ("USC", "CFR", "all")}
+    fps: list[tuple[str, _Cite]] = []
+    fns: list[tuple[str, _Cite]] = []
+    for text, expected in gold:
+        gold_set = set(expected)
+        detected = {_mention_key(m) for m in detect_mentions(text)}
+        for cite in detected & gold_set:
+            metrics[cite[0].upper()].tp += 1
+            metrics["all"].tp += 1
+        for cite in detected - gold_set:
+            metrics[cite[0].upper()].fp += 1
+            metrics["all"].fp += 1
+            fps.append((text, cite))
+        for cite in gold_set - detected:
+            metrics[cite[0].upper()].fn += 1
+            metrics["all"].fn += 1
+            fns.append((text, cite))
+    return metrics, fps, fns
+
+
+def render_detection_report(
+    gold: tuple[tuple[str, tuple[_Cite, ...]], ...] = DETECTION_GOLD,
+) -> str:
+    metrics, fps, fns = detection_metrics(gold)
+    n_passages = len(gold)
+    n_distractors = sum(1 for _, c in gold if not c)
+    n_gold_cites = sum(len(c) for _, c in gold)
+    lines: list[str] = []
+    A = lines.append
+    A("# M2 citation-detector Stage-A metrics")
+    A("")
+    A("Detection is scored separately from parsing: find USC/CFR citation spans inside free")
+    A("prose (`detect_mentions`), and do **not** fire on citation-shaped noise. The gold set")
+    A("is hand-curated — realistic legal sentences plus adversarial distractors (dates,")
+    A("dollar amounts, `Rule 12(b)(6)`, Public Law / Fed. Reg. numbers, version strings,")
+    A("phone numbers) whose expected result is empty. A detection matches a gold citation on")
+    A("its `(corpus, title, section)` identity. Gold labels are independent ground truth,")
+    A("never derived from the detector's own output.")
+    A("")
+    A(f"Gold set: **{n_passages} passages**, **{n_gold_cites} citations**, "
+      f"**{n_distractors} pure-distractor passages**.")
+    A("")
+    A("| Corpus | TP | FP | FN | Precision | Recall | F1 |")
+    A("|---|---:|---:|---:|---:|---:|---:|")
+    for k in ("USC", "CFR", "all"):
+        m = metrics[k]
+        label = f"**{k}**" if k == "all" else k
+        A(f"| {label} | {m.tp} | {m.fp} | {m.fn} | {m.precision:.3f} | "
+          f"{m.recall:.3f} | {m.f1:.3f} |")
+    A("")
+    A("## False positives (precision failures)")
+    A("")
+    if fps:
+        for text, cite in sorted(fps):
+            A(f"- `{cite[0]} {cite[1]} {cite[2]}` wrongly detected in: {text!r}")
+    else:
+        A("None — the detector fired on no distractor.")
+    A("")
+    A("## False negatives (recall gaps)")
+    A("")
+    if fns:
+        for text, cite in sorted(fns):
+            A(f"- `{cite[0]} {cite[1]} {cite[2]}` missed in: {text!r}")
+        A("")
+        A("The remaining gap is the 2nd+ section of an enumerated `§§ a, b` list — a known,")
+        A("deferred detection feature (each list member is a distinct citation).")
+    else:
+        A("None.")
+    A("")
+    A("## Empirical baseline targets")
+    A("")
+    A(f"Recorded after commissioning (not hardcoded legal rules): precision "
+      f"`>= {_DETECTION_MIN_PRECISION:.2f}`, recall `>= {_DETECTION_MIN_RECALL:.2f}`. The")
+    A("detector is deliberately precision-first — abstaining on ambiguous prose beats a")
+    A("false citation edge. The free-text scan covers ABSOLUTE forms only; the qualified")
+    A("prose form (`section 1983 of title 42`) and enumerated `§§` lists are deferred.")
+    A("")
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     ap = argparse.ArgumentParser(
-        description="M2: federal exact-citation parser self-check — parse each row's own "
-        "citation and compare to its structured title/section."
+        description="M2: federal exact-citation parser — self-check (parse the dataset's own "
+        "citations) and/or Stage-A detection metrics on the hand-labelled gold set."
     )
-    ap.add_argument("paths", nargs="+", help="Parquet file(s) or glob(s)")
-    ap.add_argument("--snapshot", required=True, help="snapshot version, e.g. v2026.08")
-    ap.add_argument("--out", help="write the Markdown report here (else stdout)")
+    ap.add_argument("paths", nargs="*", help="Parquet file(s) or glob(s) for the self-check")
+    ap.add_argument("--snapshot", help="snapshot version, e.g. v2026.08 (required with paths)")
+    ap.add_argument("--out", help="write the self-check Markdown report here (else stdout)")
+    ap.add_argument("--detection-out", help="write the Stage-A detection report here")
     args = ap.parse_args(argv)
+
+    if not args.paths and not args.detection_out:
+        ap.error("give Parquet paths (self-check) and/or --detection-out (detection metrics)")
+
+    if args.detection_out:
+        Path(args.detection_out).write_text(render_detection_report())
+        print(f"wrote {args.detection_out} (detection metrics)")
+
+    if not args.paths:
+        return
+    if not args.snapshot:
+        ap.error("--snapshot is required when Parquet paths are given")
 
     files = sorted({Path(p) for pat in args.paths for p in globlib.glob(pat)})
     per_file = [(f.name.replace(".parquet", ""), analyze_file(f)) for f in files]
