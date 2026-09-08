@@ -285,6 +285,39 @@ def test_detection_no_false_positive_on_any_distractor():
             assert detect_mentions(text) == [], text
 
 
+def test_detect_enumerated_section_list():
+    ms = detect_mentions("Brought under 42 U.S.C. §§ 1983, 1985 jointly.")
+    got = [(m.parsed.parsed_title, m.parsed.parsed_section) for m in ms]
+    assert got == [("42", "1983"), ("42", "1985")]  # both members, shared title
+
+
+def test_detect_three_item_and_list():
+    ms = detect_mentions("It cites 42 U.S.C. §§ 1981, 1982, and 1983 together.")
+    assert [m.parsed.parsed_section for m in ms] == ["1981", "1982", "1983"]
+
+
+def test_detect_cfr_enumerated_list():
+    ms = detect_mentions("The rules at 17 C.F.R. §§ 240.10b-5, 240.14a-9 apply.")
+    got = [(m.parsed.parsed_title, m.parsed.parsed_section) for m in ms]
+    assert got == [("17", "240.10b-5"), ("17", "240.14a-9")]
+
+
+def test_detect_list_does_not_absorb_a_following_new_citation():
+    """The precision trap: a §§ list running into a different citation must not attribute
+    the new citation's number to the list's title."""
+    ms = detect_mentions("Under 42 U.S.C. §§ 1983, 1985 and 5 U.S.C. § 552, relief lies.")
+    got = {(m.parsed.parsed_title, m.parsed.parsed_section) for m in ms}
+    assert got == {("42", "1983"), ("42", "1985"), ("5", "552")}
+    assert ("42", "5") not in got  # never a phantom title-42 §5
+
+
+def test_single_section_sign_does_not_start_a_list():
+    """A single § followed by 'and <n> U.S.C.' is two separate citations, not a list."""
+    ms = detect_mentions("See 42 U.S.C. § 1983 and 5 U.S.C. § 552.")
+    got = {(m.parsed.parsed_title, m.parsed.parsed_section) for m in ms}
+    assert got == {("42", "1983"), ("5", "552")}
+
+
 def test_detection_report_is_stable():
     r1 = render_detection_report()
     r2 = render_detection_report()

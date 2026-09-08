@@ -403,6 +403,22 @@ def build_reference_mention(
 _DETECT_USC = re.compile(_USC_ABSOLUTE.pattern)
 _DETECT_CFR = re.compile(_CFR_ABSOLUTE.pattern)
 
+# Enumerated `§§ a, b, c` lists. A **plural** section sign (``§§``, ``Sections``, ``Secs``)
+# in the primary match licenses consuming further comma/and-separated **bare** sections that
+# share the primary's title. The negative lookahead ``_NOT_A_NEW_CITATION`` is the precision
+# guard: a section immediately followed by a code (``5`` in ``…, and 5 U.S.C. § 552``) is a
+# *new* citation, not a list member, so the list stops there and the new citation is caught
+# by the ordinary scan. Only a plural sign triggers this, so a single-``§`` citation followed
+# by ``and 5 U.S.C. …`` never mis-attributes ``5`` to the first title.
+_PLURAL_SIGN_RE = re.compile(r"§§|[Ss]ections\b|[Ss]ecs\b")
+_LIST_SEP = r"(?:\s*,\s*(?:and\s+)?|\s+and\s+)"
+_NOT_A_NEW_CITATION = r"(?!\s*(?:U\.?\s?S\.?\s?C|C\.?\s?F\.?\s?R))"
+_USC_SECTION_BARE = r"\d+[A-Za-z]*(?:_\d+)?(?:\([0-9A-Za-z]{1,4}\))*"
+_CFR_SECTION_BARE = r"\d+[A-Za-z]?(?:-\d+[A-Za-z]?)*\.[0-9A-Za-z](?:[0-9A-Za-z().\-]*[0-9A-Za-z)])?"
+_USC_LIST_TAIL = re.compile(rf"{_LIST_SEP}(?P<section>{_USC_SECTION_BARE}){_NOT_A_NEW_CITATION}")
+_CFR_LIST_TAIL = re.compile(rf"{_LIST_SEP}(?P<section>{_CFR_SECTION_BARE}){_NOT_A_NEW_CITATION}")
+_LIST_TAILS = {FederalCorpus.USC: _USC_LIST_TAIL, FederalCorpus.CFR: _CFR_LIST_TAIL}
+
 
 def detect_mentions(
     text: str, *, source_record_id: str | None = None, structural_path: str | None = None
@@ -410,11 +426,21 @@ def detect_mentions(
     """Scan free text for ABSOLUTE USC/CFR citation spans → ``ReferenceMention``s.
 
     CFR spans are matched first and USC matches overlapping a CFR span are dropped, so a
-    ``C.F.R.`` citation is never double-counted as a bare USC number. Deterministic order
-    (by span start).
+    ``C.F.R.`` citation is never double-counted as a bare USC number. An enumerated
+    ``§§ a, b`` list emits one mention per member, all sharing the primary's title.
+    Deterministic order (by span start).
     """
     mentions: list[ReferenceMention] = []
     spans: list[tuple[int, int]] = []
+
+    def _emit(parsed: ParsedCitation, raw: str, start: int, end: int) -> None:
+        spans.append((start, end))
+        mentions.append(
+            build_reference_mention(
+                parsed, raw, start, end,
+                source_record_id=source_record_id, structural_path=structural_path,
+            )
+        )
 
     for pattern, corpus, method in (
         (_DETECT_CFR, FederalCorpus.CFR, "cfr_grammar_v3"),
@@ -423,18 +449,24 @@ def detect_mentions(
         for m in pattern.finditer(text):
             if any(m.start() < e and s < m.end() for s, e in spans):
                 continue
-            parsed = _parsed_from_absolute(m, corpus, method)
-            spans.append((m.start(), m.end()))
-            mentions.append(
-                build_reference_mention(
-                    parsed,
-                    m.group(0),
-                    m.start(),
-                    m.end(),
-                    source_record_id=source_record_id,
-                    structural_path=structural_path,
+            _emit(_parsed_from_absolute(m, corpus, method), m.group(0), m.start(), m.end())
+            # Enumerated list: only a plural section sign licenses the continuation.
+            if not _PLURAL_SIGN_RE.search(m.group(0)):
+                continue
+            title = m.group("title")
+            pos = m.end()
+            while (tm := _LIST_TAILS[corpus].match(text, pos)) is not None:
+                section = tm.group("section")
+                part = section.split(".", 1)[0] if corpus == FederalCorpus.CFR else None
+                _emit(
+                    ParsedCitation(
+                        parsed_corpus=corpus, parsed_title=title, parsed_section=section,
+                        parsed_part=part, reference_type=ReferenceType.ABSOLUTE,
+                        parser_method=method, parser_confidence=_ABSOLUTE_CONFIDENCE,
+                    ),
+                    section, tm.start("section"), tm.end("section"),
                 )
-            )
+                pos = tm.end()
     mentions.sort(key=lambda mm: (mm.start_char, mm.end_char))
     return mentions
 
@@ -714,6 +746,14 @@ DETECTION_GOLD: tuple[tuple[str, tuple[_Cite, ...]], ...] = (
     ("As amended, 42 U.S.C. § 1983 (2018) still applies.", (("usc", "42", "1983"),)),
     ("Brought under 42 U.S.C. §§ 1983, 1985 jointly.",
      (("usc", "42", "1983"), ("usc", "42", "1985"))),
+    ("It cites 42 U.S.C. §§ 1981, 1982, and 1983 together.",
+     (("usc", "42", "1981"), ("usc", "42", "1982"), ("usc", "42", "1983"))),
+    ("The rules at 17 C.F.R. §§ 240.10b-5, 240.14a-9 apply.",
+     (("cfr", "17", "240.10b-5"), ("cfr", "17", "240.14a-9"))),
+    # precision trap: a §§ list that runs into a DIFFERENT citation — the "5" must not be
+    # mis-attributed to title 42, and 5 U.S.C. § 552 must still be found on its own.
+    ("Under 42 U.S.C. §§ 1983, 1985 and 5 U.S.C. § 552, relief lies.",
+     (("usc", "42", "1983"), ("usc", "42", "1985"), ("usc", "5", "552"))),
     # --- adversarial distractors: nothing should be detected ---
     ("Section 5 of the Agreement dated January 2024.", ()),
     ("Public Law 118-274 amended the statute.", ()),
@@ -732,10 +772,10 @@ DETECTION_GOLD: tuple[tuple[str, tuple[_Cite, ...]], ...] = (
 )
 
 # Empirical baseline targets recorded after commissioning (M2 acceptance: thresholds are
-# measured, not hardcoded legal rules). The detector is precision-first; the one known
-# recall gap is the 2nd+ member of an enumerated `§§ a, b` list.
+# measured, not hardcoded legal rules). The detector is precision-first; with enumerated
+# `§§` lists now handled, the gold set has no recall gap (a small floor is kept for slack).
 _DETECTION_MIN_PRECISION = 1.0
-_DETECTION_MIN_RECALL = 0.95
+_DETECTION_MIN_RECALL = 0.98
 
 
 @dataclass
@@ -842,8 +882,10 @@ def render_detection_report(
     A(f"Recorded after commissioning (not hardcoded legal rules): precision "
       f"`>= {_DETECTION_MIN_PRECISION:.2f}`, recall `>= {_DETECTION_MIN_RECALL:.2f}`. The")
     A("detector is deliberately precision-first — abstaining on ambiguous prose beats a")
-    A("false citation edge. The free-text scan covers ABSOLUTE forms only; the qualified")
-    A("prose form (`section 1983 of title 42`) and enumerated `§§` lists are deferred.")
+    A("false citation edge. The free-text scan covers ABSOLUTE citations, including")
+    A("enumerated `§§ a, b` lists (each member emitted, a following bare number that is")
+    A("itself a new citation is not mis-attributed); the qualified prose form (`section")
+    A("1983 of title 42`) and full corpus-scale in-body detection are deferred.")
     A("")
     return "\n".join(lines) + "\n"
 

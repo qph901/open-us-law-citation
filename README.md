@@ -131,10 +131,11 @@ second.
   where the flat column is null, and parses 14 CFR Part 241's dotless sections with no
   part at reduced confidence); the only 6 remaining CFR rows are malformed source
   citations, where abstaining is the correct outcome. Stage-A **detection** is measured
-  separately on a hand-labelled gold set (28 passages incl. adversarial distractors) in
+  separately on a hand-labelled gold set (31 passages incl. adversarial distractors) in
   [`reports/M2_detection_metrics.md`](reports/M2_detection_metrics.md) — **precision
-  1.000, recall 0.957** (zero false positives), which caught and fixed a free-text
-  section-truncation bug.
+  1.000, recall 1.000** (zero false positives), handling enumerated `§§` lists and
+  guarding the precision trap where a list runs into a new citation; it also caught and
+  fixed a free-text section-truncation bug.
 
 ## Setup
 

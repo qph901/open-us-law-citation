@@ -622,15 +622,16 @@ interpretation side of the boundary, `ArtifactType.REFERENCE_MENTION`).
   scale — **USC 100.00% exact, CFR 100.00%, zero mismatches** — with the residue honest (parser
   *recovers* a null `title_number`; 14 CFR Part 241 dotless sections parse `parsed_part=None` at
   reduced confidence; the only 6 CFR non-parses are malformed source strings, correctly abstained).
-- **Stage A (detection)** measured as precision/recall over a **hand-labelled gold set** (28
-  passages, 23 citations, 9 adversarial distractors — dates, `$` amounts, `Rule 12(b)(6)`, Public
-  Law / Fed. Reg. numbers, version strings, phone numbers): **precision 1.000, recall 0.957, F1
-  0.978** (CFR 1.000/1.000; USC 1.000/0.929). Precision-first: zero false positives on any
-  distractor. The gold set caught a real free-text bug (the CFR section truncated `240.10b-5` →
-  `240.1` under `finditer`), now fixed and regression-tested. Baseline thresholds recorded as
-  empirical targets. The one recall gap is the 2nd+ member of an enumerated `§§ a, b` list; the
-  qualified prose form (`section 1983 of title 42`) and full corpus-scale in-body detection are
-  deferred (the latter overlaps M4).
+- **Stage A (detection)** measured as precision/recall over a **hand-labelled gold set** (31
+  passages, 31 citations, 9 adversarial distractors — dates, `$` amounts, `Rule 12(b)(6)`, Public
+  Law / Fed. Reg. numbers, version strings, phone numbers): **precision 1.000, recall 1.000, F1
+  1.000** for USC, CFR, and combined. Precision-first: zero false positives on any distractor. The
+  gold set caught a real free-text bug (the CFR section truncated `240.10b-5` → `240.1` under
+  `finditer`), now fixed and regression-tested. Enumerated `§§ a, b` lists are handled — each member
+  emitted under the shared title — with a negative-lookahead guard so a list running into a *new*
+  citation (`…, and 5 U.S.C. § 552`) never mis-attributes it (only a plural sign licenses the
+  continuation). Baseline thresholds recorded as empirical targets. Deferred: the qualified prose
+  form (`section 1983 of title 42`) and full corpus-scale in-body detection (the latter overlaps M4).
 **Still open before M2 formally closes:** the milestone is **out of sequence** — `ReferenceMention`
 is provisional until the M1B freeze, and its thresholds are recommissioned then; resolution/alias/
 validation is **M3**, not this. The detector/parser is production-usable now.

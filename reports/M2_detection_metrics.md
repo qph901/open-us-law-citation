@@ -8,13 +8,13 @@ phone numbers) whose expected result is empty. A detection matches a gold citati
 its `(corpus, title, section)` identity. Gold labels are independent ground truth,
 never derived from the detector's own output.
 
-Gold set: **28 passages**, **23 citations**, **9 pure-distractor passages**.
+Gold set: **31 passages**, **31 citations**, **9 pure-distractor passages**.
 
 | Corpus | TP | FP | FN | Precision | Recall | F1 |
 |---|---:|---:|---:|---:|---:|---:|
-| USC | 13 | 0 | 1 | 1.000 | 0.929 | 0.963 |
-| CFR | 9 | 0 | 0 | 1.000 | 1.000 | 1.000 |
-| **all** | 22 | 0 | 1 | 1.000 | 0.957 | 0.978 |
+| USC | 20 | 0 | 0 | 1.000 | 1.000 | 1.000 |
+| CFR | 11 | 0 | 0 | 1.000 | 1.000 | 1.000 |
+| **all** | 31 | 0 | 0 | 1.000 | 1.000 | 1.000 |
 
 ## False positives (precision failures)
 
@@ -22,15 +22,14 @@ None — the detector fired on no distractor.
 
 ## False negatives (recall gaps)
 
-- `usc 42 1985` missed in: 'Brought under 42 U.S.C. §§ 1983, 1985 jointly.'
-
-The remaining gap is the 2nd+ section of an enumerated `§§ a, b` list — a known,
-deferred detection feature (each list member is a distinct citation).
+None.
 
 ## Empirical baseline targets
 
-Recorded after commissioning (not hardcoded legal rules): precision `>= 1.00`, recall `>= 0.95`. The
+Recorded after commissioning (not hardcoded legal rules): precision `>= 1.00`, recall `>= 0.98`. The
 detector is deliberately precision-first — abstaining on ambiguous prose beats a
-false citation edge. The free-text scan covers ABSOLUTE forms only; the qualified
-prose form (`section 1983 of title 42`) and enumerated `§§` lists are deferred.
+false citation edge. The free-text scan covers ABSOLUTE citations, including
+enumerated `§§ a, b` lists (each member emitted, a following bare number that is
+itself a new citation is not mis-attributed); the qualified prose form (`section
+1983 of title 42`) and full corpus-scale in-body detection are deferred.
 
