@@ -20,10 +20,11 @@ Supported today (``reference_type`` ``ABSOLUTE``/``QUALIFIED`` only; hierarchy-r
   a trailing ``(2024)``, letter-suffix sections (``1613a``, ``77aa``, ``1749aaa``),
   underscore tails (``222e_2``), subsections (``§ 1983(a)(2)``), and the qualified
   ``section 1983 of title 42``.
-* CFR — ``17 CFR 240.10b-5``, ``5 C.F.R. § 330.601``, hyphen/letter sections
-  (``1864.0-3``), letter-suffixed parts (``261a.1``), hyphenated FPMR parts
-  (``101-6.2104``), subsections, a trailing ``(2026)``, and
-  ``section 240.10b-5 of title 17``.
+* CFR (``cfr_grammar_v2``) — ``17 CFR 240.10b-5``, ``5 C.F.R. § 330.601``, hyphen/letter
+  sections (``1864.0-3``), letter-suffixed parts (``261a.1``), hyphenated FPMR parts
+  (``101-6.2104``), a trailing ``(2026)``, and ``section 240.10b-5 of title 17``. Unlike
+  USC, a CFR section's parenthesised/temporary material is part of its identity, so v2
+  keeps it in ``parsed_section`` (``41.6151(a)-1``, ``240.11a1-4(T)``).
 
 **Self-check (the Stage-B metric on the dataset's own labels).** Every USC/CFR row carries
 a regular ``citation`` / ``citation_short`` string *and* structured ``title_number`` /
@@ -137,30 +138,37 @@ _USC_CODE = r"U\.?\s?S\.?\s?C\.?(?:\s?A\.?)?"        # U.S.C., USC, U.S.C.A.
 _CFR_CODE = r"C\.?\s?F\.?\s?R\.?"                    # C.F.R., CFR
 _SECTION_SIGN = r"(?:§{1,2}|[Ss]ections?|[Ss]ecs?\.?)"
 _YEAR = r"(?:\s*\((?:19|20)\d{2}\))?"
-_SUBSEC = r"(?P<subsection>(?:\([0-9A-Za-z]{1,4}\))+)?"
 
 # USC section: digits, then optional letter suffix (1613a, 77aa, 1749aaa) and an
-# optional underscore-number tail (222e_2). No dots.
+# optional underscore-number tail (222e_2). No dots. A USC subsection (``(a)(2)``) is a
+# *separate* pointer — the dataset's section_number is the bare number — so USC keeps the
+# ``_USC_SUBSEC`` group and strips it out of ``parsed_section``.
 _USC_SECTION = r"(?P<section>\d+[A-Za-z]*(?:_\d+)?)"
-# CFR section: part.rest. The part may carry a letter suffix (261a.1 -> part 261a) and
-# hyphenated segments (101-6.2104 -> part 101-6, the title-41 FPMR style); rest may carry
-# letters/hyphens (330.601, 240.10b-5, 1864.0-3, 101-6.205-2).
+# CFR section (cfr_grammar_v2): part.rest, where the ENTIRE token is the section identity.
+# Unlike USC, the dataset stores parenthesised/temporary material *inside* section_number
+# (26 CFR § 41.6151(a)-1, 17 CFR § 240.11a1-4(T)), so v2 captures embedded ``(...)`` and a
+# trailing ``(T)`` as part of the section rather than stripping them. The part may carry a
+# letter suffix (261a.1) or hyphenated FPMR segments (101-6.2104); the token must end on an
+# alphanumeric or ``)`` so sentence punctuation in free text is not swallowed. A ``(YYYY)``
+# edition marker is always space-separated, so it is never captured here.
+_USC_SUBSEC = r"(?P<subsection>(?:\([0-9A-Za-z]{1,4}\))+)?"
 _CFR_SECTION = (
-    r"(?P<section>(?P<part>\d+[A-Za-z]?(?:-\d+[A-Za-z]?)*)\.[0-9A-Za-z][0-9A-Za-z.\-]*)"
+    r"(?P<section>(?P<part>\d+[A-Za-z]?(?:-\d+[A-Za-z]?)*)"
+    r"\.(?:[0-9A-Za-z]|[0-9A-Za-z][0-9A-Za-z().\-]*[0-9A-Za-z)]))"
 )
 
 _USC_ABSOLUTE = re.compile(
-    rf"(?P<title>\d+)\s+{_USC_CODE}\s*(?:{_SECTION_SIGN}\s*)?{_USC_SECTION}{_SUBSEC}{_YEAR}",
+    rf"(?P<title>\d+)\s+{_USC_CODE}\s*(?:{_SECTION_SIGN}\s*)?{_USC_SECTION}{_USC_SUBSEC}{_YEAR}",
 )
 _USC_QUALIFIED = re.compile(
-    rf"[Ss]ection\s+{_USC_SECTION}{_SUBSEC}\s+of\s+[Tt]itle\s+(?P<title>\d+)"
+    rf"[Ss]ection\s+{_USC_SECTION}{_USC_SUBSEC}\s+of\s+[Tt]itle\s+(?P<title>\d+)"
     rf"(?:,?\s+United\s+States\s+Code)?",
 )
 _CFR_ABSOLUTE = re.compile(
-    rf"(?P<title>\d+)\s+{_CFR_CODE}\s*(?:{_SECTION_SIGN}\s*)?{_CFR_SECTION}{_SUBSEC}{_YEAR}",
+    rf"(?P<title>\d+)\s+{_CFR_CODE}\s*(?:{_SECTION_SIGN}\s*)?{_CFR_SECTION}{_YEAR}",
 )
 _CFR_QUALIFIED = re.compile(
-    rf"[Ss]ection\s+{_CFR_SECTION}{_SUBSEC}\s+of\s+[Tt]itle\s+(?P<title>\d+)"
+    rf"[Ss]ection\s+{_CFR_SECTION}\s+of\s+[Tt]itle\s+(?P<title>\d+)"
     rf"(?:,?\s+Code\s+of\s+Federal\s+Regulations)?",
 )
 
@@ -176,7 +184,7 @@ def _parsed_from_absolute(m: re.Match, corpus: FederalCorpus, method: str) -> Pa
         parsed_title=m.group("title"),
         parsed_section=m.group("section"),
         parsed_part=m.group("part") if corpus == FederalCorpus.CFR else None,
-        parsed_subsection=m.group("subsection") or None,
+        parsed_subsection=m.groupdict().get("subsection") or None,
         reference_type=ReferenceType.ABSOLUTE,
         parser_method=method,
         parser_confidence=_ABSOLUTE_CONFIDENCE,
@@ -189,7 +197,7 @@ def _parsed_from_qualified(m: re.Match, corpus: FederalCorpus, method: str) -> P
         parsed_title=m.group("title"),
         parsed_section=m.group("section"),
         parsed_part=m.group("part") if corpus == FederalCorpus.CFR else None,
-        parsed_subsection=m.group("subsection") or None,
+        parsed_subsection=m.groupdict().get("subsection") or None,
         reference_type=ReferenceType.QUALIFIED,
         parser_method=method,
         parser_confidence=_QUALIFIED_CONFIDENCE,
@@ -216,10 +224,10 @@ def parse_cfr_citation(text: str) -> ParsedCitation | None:
     """Parse a single CFR citation string, or abstain (``None``)."""
     m = _fullmatch(_CFR_ABSOLUTE, text)
     if m:
-        return _parsed_from_absolute(m, FederalCorpus.CFR, "cfr_grammar_v1")
+        return _parsed_from_absolute(m, FederalCorpus.CFR, "cfr_grammar_v2")
     m = _fullmatch(_CFR_QUALIFIED, text)
     if m:
-        return _parsed_from_qualified(m, FederalCorpus.CFR, "cfr_grammar_v1")
+        return _parsed_from_qualified(m, FederalCorpus.CFR, "cfr_grammar_v2")
     return None
 
 
@@ -376,7 +384,7 @@ def detect_mentions(
     spans: list[tuple[int, int]] = []
 
     for pattern, corpus, method in (
-        (_DETECT_CFR, FederalCorpus.CFR, "cfr_grammar_v1"),
+        (_DETECT_CFR, FederalCorpus.CFR, "cfr_grammar_v2"),
         (_DETECT_USC, FederalCorpus.USC, "usc_grammar_v1"),
     ):
         for m in pattern.finditer(text):
@@ -514,7 +522,7 @@ def render_report(
     A = lines.append
     A("# M2 citation-parser self-check")
     A("")
-    A(f"Snapshot: `{snapshot}`. Parser methods: `usc_grammar_v1`, `cfr_grammar_v1`.")
+    A(f"Snapshot: `{snapshot}`. Parser methods: `usc_grammar_v1`, `cfr_grammar_v2`.")
     A("")
     A("Each USC/CFR row's own `citation_short` (or `citation`) is parsed and its")
     A("`(title, section)` compared to the row's structured `title_number` /")

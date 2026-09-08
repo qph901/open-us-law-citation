@@ -120,16 +120,16 @@ second.
   count is presented as coverage.
 - **M2 — federal exact-citation parser (oracle-independent slice): started.**
   [`src/open_us_law_coverage/citation_parser.py`](src/open_us_law_coverage/citation_parser.py):
-  a deterministic USC/CFR citation grammar (`usc_grammar_v1` / `cfr_grammar_v1`) →
+  a deterministic USC/CFR citation grammar (`usc_grammar_v1` / `cfr_grammar_v2`) →
   structured `ParsedCitation` / `ReferenceMention` (pre-resolution; provenance on the
   interpretation boundary). Resolution (M3), the alias index, and official validation are
   out of scope. Started ahead of the M1B freeze because the parser needs no blocked
   oracle bytes: the dataset's own `citation`/`citation_short` + structured
   `title_number`/`section_number` are a full-corpus labeled set. Self-check at
   [`reports/M2_parse_selfcheck.md`](reports/M2_parse_selfcheck.md) — **USC 100.00%
-  exact**, **CFR 99.31% correct** (the parser also recovers `title_number` where the flat
-  column is null); the only remaining strata are title-26 mid-subsection sections and 5
-  `(T)`-suffix rows.
+  exact**, **CFR 99.98% correct with 0 mismatches** (the parser also recovers
+  `title_number` where the flat column is null); the only 47 remaining CFR rows are
+  part-level references and source typos, where abstaining is the correct outcome.
 
 ## Setup
 

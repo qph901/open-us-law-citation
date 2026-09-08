@@ -84,6 +84,11 @@ def test_parse_usc_qualified():
         ("12 C.F.R. § 261a.1", "12", "261a", "261a.1"),          # letter-suffixed part
         ("41 C.F.R. § 101-6.2104", "41", "101-6", "101-6.2104"),  # hyphenated part (FPMR)
         ("41 C.F.R. § 101-6.205-2", "41", "101-6", "101-6.205-2"),
+        # v2: embedded subsection + trailing (T) are part of the CFR section identity
+        ("26 C.F.R. § 41.6151(a)-1", "26", "41", "41.6151(a)-1"),
+        ("26 C.F.R. § 31.3401(a)(8)(B)-1", "26", "31", "31.3401(a)(8)(B)-1"),
+        ("17 C.F.R. § 240.11a1-4(T)", "17", "240", "240.11a1-4(T)"),
+        ("5 C.F.R. § 330.601 (2026)", "5", "330", "330.601"),     # year still not captured
     ],
 )
 def test_parse_cfr_absolute(text, title, part, section):
@@ -91,7 +96,14 @@ def test_parse_cfr_absolute(text, title, part, section):
     assert p is not None
     assert p.parsed_corpus == FederalCorpus.CFR
     assert (p.parsed_title, p.parsed_part, p.parsed_section) == (title, part, section)
-    assert p.parser_method == "cfr_grammar_v1"
+    assert p.parser_method == "cfr_grammar_v2"
+
+
+def test_cfr_v2_keeps_year_separate_from_embedded_subsection():
+    """A trailing (YYYY) is space-separated and never swallowed, even though an embedded
+    (a) with no leading space IS part of the section identity."""
+    p = parse_cfr_citation("26 C.F.R. § 41.6151(a)-1 (2024)")
+    assert p is not None and p.parsed_section == "41.6151(a)-1"
 
 
 def test_parse_cfr_qualified():

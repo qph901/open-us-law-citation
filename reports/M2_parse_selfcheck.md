@@ -1,6 +1,6 @@
 # M2 citation-parser self-check
 
-Snapshot: `v2026.08`. Parser methods: `usc_grammar_v1`, `cfr_grammar_v1`.
+Snapshot: `v2026.08`. Parser methods: `usc_grammar_v1`, `cfr_grammar_v2`.
 
 Each USC/CFR row's own `citation_short` (or `citation`) is parsed and its
 `(title, section)` compared to the row's structured `title_number` /
@@ -23,18 +23,8 @@ expected-abstention baseline, not scored.
 
 | File | Rows | Parsed | Exact | Recovered | Mismatch | Abstained | Correct rate |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| us_federal_regulations | 220,018 | 218,513 | 216,807 | 1,701 | 5 | 1,505 | 99.31% |
-| **all** | **220,018** | **218,513** | **216,807** | **1,701** | **5** | **1,505** | **99.31%** |
-
-Mismatch examples (CFR, first 15 by citation):
-
-| Citation | Parsed | Expected |
-|---|---|---|
-| `17 C.F.R. § 240.11a1-1(T)` | `T17 S'240.11a1-1'` | `T17 S'240.11a1-1(T)'` |
-| `17 C.F.R. § 240.11a1-3(T)` | `T17 S'240.11a1-3'` | `T17 S'240.11a1-3(T)'` |
-| `17 C.F.R. § 240.11a1-4(T)` | `T17 S'240.11a1-4'` | `T17 S'240.11a1-4(T)'` |
-| `17 C.F.R. § 240.11a2-2(T)` | `T17 S'240.11a2-2'` | `T17 S'240.11a2-2(T)'` |
-| `48 C.F.R. § 312.202(d)` | `T48 S'312.202'` | `T48 S'312.202(d)'` |
+| us_federal_regulations | 220,018 | 219,971 | 218,268 | 1,703 | 0 | 47 | 99.98% |
+| **all** | **220,018** | **219,971** | **218,268** | **1,703** | **0** | **47** | **99.98%** |
 
 Abstention examples (CFR, first 15 by citation):
 
