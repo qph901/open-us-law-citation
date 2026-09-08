@@ -515,6 +515,55 @@ def _pct(numer: int, denom: int) -> str:
     return f"{100.0 * numer / denom:.2f}%" if denom else "—"
 
 
+# Embedded qualitative findings (like hierarchy.py's EXIT_SECTION) so the report
+# regenerates verbatim. These are the citation-format facts the self-check rests on —
+# each conformance figure below was measured over the full v2026.08 federal corpus.
+_FORMAT_SECTION = """\
+## Citation format (what the grammar targets)
+
+Each row stores `citation` (with edition year) and `citation_short` (without). For USC and
+codified CFR the shape is exact and uniform across the whole corpus:
+
+```
+citation        =  citation_short + " (" + year + ")"
+citation_short  =  <title> <CODE> § <section>
+```
+
+| Corpus | Rows | Template | Example (`citation`) | Conformance |
+|---|---:|---|---|---:|
+| USC | 54,853 | `<title> U.S.C. § <section> (<year>)` | `42 U.S.C. § 1983 (2024)` | 100.00% |
+| CFR (codified) | 220,018 | `<title> C.F.R. § <section> (<year>)` | `5 C.F.R. § 330.601 (2026)` | 100.00% |
+| Federal Register (`FR_*`) | 362,036 | `<volume> FR <page>` | `71 FR 8523` | different format |
+
+- `citation_short` matches `^<n> U.S.C. § ` for 100% of USC rows and `^<n> C.F.R. § ` for
+  100% of codified CFR rows; `citation == citation_short || ' (' || year || ')'` holds for
+  100% of both (and for none of the FR rows).
+- The USC edition `<year>` is uniformly `2024` (the GovInfo USCODE-2024 edition); CFR carries
+  its source year.
+- Federal Register is a `volume FR page` locator (`71 FR 8523`) — no `§`, no title/section —
+  so all 362,036 `FR_*` rows are excluded from the parser (promulgation records, not codified
+  sections) and form the expected-abstention baseline above.
+
+### The `<section>` sub-grammar (the one component with real structure)
+
+| Corpus | Shape | Examples |
+|---|---|---|
+| USC | digits + optional letters + optional `_digits` | `1983`, `1613a`, `77aa`, `1749aaa`, `222e_2` |
+| CFR | `part.rest`; part may carry a letter (`261a`) or hyphens (`101-6`); rest carries digits/letters/hyphens and **embedded** `(...)` / `(T)` | `330.601`, `240.10b-5`, `1864.0-3`, `41.6151(a)-1`, `240.11a1-4(T)` |
+
+The load-bearing USC-vs-CFR asymmetry (why the CFR producer is `cfr_grammar_v2`): in USC a
+subsection like `(a)` is a *separate* pointer and never appears in `section_number`; in CFR
+the parenthesised/`(T)` material is *part of the section identity* and lives inside
+`section_number`, so v2 keeps it in `parsed_section`.
+
+Beyond the `§` forms, the grammar also accepts the variants people write — `42 USC 1983`,
+`42 U.S.C.A. § 1983`, `Section 1983 of Title 42` — but the two fields above are the dataset's
+own canonical shape, which is what makes them a clean full-corpus labelled set. The only
+citation strings that do not fit are the abstentions listed above (14 CFR Part 241's dotless
+numbering and a handful of source typos).
+"""
+
+
 def render_report(
     per_file: list[tuple[str, dict[str, CorpusSelfCheck]]], snapshot: str
 ) -> str:
@@ -587,6 +636,7 @@ def render_report(
             continue
         A(f"| {fname} | {r.rows:,} | {r.abstained:,} | {r.parsed:,} |")
     A("")
+    A(_FORMAT_SECTION)
     return "\n".join(lines) + "\n"
 
 
