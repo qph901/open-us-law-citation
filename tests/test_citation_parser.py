@@ -96,7 +96,33 @@ def test_parse_cfr_absolute(text, title, part, section):
     assert p is not None
     assert p.parsed_corpus == FederalCorpus.CFR
     assert (p.parsed_title, p.parsed_part, p.parsed_section) == (title, part, section)
-    assert p.parser_method == "cfr_grammar_v2"
+    assert p.parser_method == "cfr_grammar_v3"
+
+
+@pytest.mark.parametrize(
+    "text,title,section",
+    [
+        ("14 C.F.R. § 1-1", "14", "1-1"),
+        ("14 C.F.R. § 03", "14", "03"),
+        ("14 C.F.R. § 19-4", "14", "19-4"),
+        ("14 C.F.R. § 9", "14", "9"),
+    ],
+)
+def test_parse_cfr_dotless_part241(text, title, section):
+    """14 CFR Part 241 sections have no part.section dot; the part is not in the citation,
+    so it parses with parsed_part=None at reduced confidence rather than being fabricated."""
+    p = parse_cfr_citation(text)
+    assert p is not None
+    assert p.parsed_corpus == FederalCorpus.CFR
+    assert (p.parsed_title, p.parsed_section, p.parsed_part) == (title, section, None)
+    assert p.parser_confidence == 0.75
+    assert p.parser_method == "cfr_grammar_v3"
+
+
+def test_cfr_dotted_still_beats_dotless():
+    """A normal dotted section keeps its part and full confidence (dotless is a fallback)."""
+    p = parse_cfr_citation("5 C.F.R. § 330.601")
+    assert p.parsed_part == "330" and p.parser_confidence == 1.0
 
 
 def test_cfr_v2_keeps_year_separate_from_embedded_subsection():
@@ -141,12 +167,20 @@ def test_abstains_on_non_citations(text):
 
 
 def test_parsed_citation_rejects_bad_shape():
-    with pytest.raises(ValueError):  # CFR requires a part
-        ParsedCitation(FederalCorpus.CFR, "17", "240.1", ReferenceType.ABSOLUTE, "m", 1.0)
+    with pytest.raises(ValueError):  # a USC citation never carries a part
+        ParsedCitation(
+            FederalCorpus.USC, "42", "1983", ReferenceType.ABSOLUTE, "m", 1.0, parsed_part="21"
+        )
     with pytest.raises(ValueError):  # relative types are not emitted by M2
         ParsedCitation(FederalCorpus.USC, "42", "1983", ReferenceType.LOCAL, "m", 1.0)
     with pytest.raises(ValueError):  # confidence out of range
         ParsedCitation(FederalCorpus.USC, "42", "1983", ReferenceType.ABSOLUTE, "m", 1.5)
+
+
+def test_cfr_partless_is_now_allowed():
+    """A dotless CFR citation legitimately has no part (14 CFR Part 241)."""
+    p = ParsedCitation(FederalCorpus.CFR, "14", "1-1", ReferenceType.ABSOLUTE, "m", 0.75)
+    assert p.parsed_part is None
 
 
 # --- ReferenceMention + provenance ----------------------------------------------

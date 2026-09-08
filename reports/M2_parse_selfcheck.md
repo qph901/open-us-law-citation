@@ -1,6 +1,6 @@
 # M2 citation-parser self-check
 
-Snapshot: `v2026.08`. Parser methods: `usc_grammar_v1`, `cfr_grammar_v2`.
+Snapshot: `v2026.08`. Parser methods: `usc_grammar_v1`, `cfr_grammar_v3`.
 
 Each USC/CFR row's own `citation_short` (or `citation`) is parsed and its
 `(title, section)` compared to the row's structured `title_number` /
@@ -23,26 +23,17 @@ expected-abstention baseline, not scored.
 
 | File | Rows | Parsed | Exact | Recovered | Mismatch | Abstained | Correct rate |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| us_federal_regulations | 220,018 | 219,971 | 218,268 | 1,703 | 0 | 47 | 99.98% |
-| **all** | **220,018** | **219,971** | **218,268** | **1,703** | **0** | **47** | **99.98%** |
+| us_federal_regulations | 220,018 | 220,012 | 218,309 | 1,703 | 0 | 6 | 100.00% |
+| **all** | **220,018** | **220,012** | **218,309** | **1,703** | **0** | **6** | **100.00%** |
 
 Abstention examples (CFR, first 15 by citation):
 
 - `12 C.F.R. § 1222. 27`
-- `14 C.F.R. § 03`
-- `14 C.F.R. § 04`
-- `14 C.F.R. § 1-1`
-- `14 C.F.R. § 1-2`
-- `14 C.F.R. § 1-3`
-- `14 C.F.R. § 1-4`
-- `14 C.F.R. § 1-5`
-- `14 C.F.R. § 1-6`
-- `14 C.F.R. § 1-7`
-- `14 C.F.R. § 1-8`
-- `14 C.F.R. § 10`
-- `14 C.F.R. § 11`
-- `14 C.F.R. § 12`
-- `14 C.F.R. § 14`
+- `36 C.F.R. § 52. 36`
+- `39 C.F.R. § 956.1 (Rule 1)`
+- `39 C.F.R. § 956.2 (Rule 2)`
+- `39 C.F.R. § 956.3 (Rule 3)`
+- `43 C.F.R. § 3141. 5`
 
 ## Expected-abstention baseline (non-USC/CFR namespaces)
 
@@ -82,14 +73,16 @@ citation_short  =  <title> <CODE> § <section>
 | USC | digits + optional letters + optional `_digits` | `1983`, `1613a`, `77aa`, `1749aaa`, `222e_2` |
 | CFR | `part.rest`; part may carry a letter (`261a`) or hyphens (`101-6`); rest carries digits/letters/hyphens and **embedded** `(...)` / `(T)` | `330.601`, `240.10b-5`, `1864.0-3`, `41.6151(a)-1`, `240.11a1-4(T)` |
 
-The load-bearing USC-vs-CFR asymmetry (why the CFR producer is `cfr_grammar_v2`): in USC a
+The load-bearing USC-vs-CFR asymmetry (why the CFR producer is `cfr_grammar_v3`): in USC a
 subsection like `(a)` is a *separate* pointer and never appears in `section_number`; in CFR
 the parenthesised/`(T)` material is *part of the section identity* and lives inside
 `section_number`, so v2 keeps it in `parsed_section`.
 
 Beyond the `§` forms, the grammar also accepts the variants people write — `42 USC 1983`,
 `42 U.S.C.A. § 1983`, `Section 1983 of Title 42` — but the two fields above are the dataset's
-own canonical shape, which is what makes them a clean full-corpus labelled set. The only
-citation strings that do not fit are the abstentions listed above (14 CFR Part 241's dotless
-numbering and a handful of source typos).
+own canonical shape, which is what makes them a clean full-corpus labelled set. A few parts
+(14 CFR Part 241) number their sections without the `part.section` dot (`1-1`, `03`, `19-4`);
+those parse with `parsed_part=None` at reduced confidence, since the part is not present in
+the citation to recover. The only strings that still do not fit are a handful of malformed
+source citations (stray spaces, `(Rule N)` annotations) — abstention there is correct.
 

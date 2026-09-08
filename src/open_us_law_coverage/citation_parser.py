@@ -20,11 +20,13 @@ Supported today (``reference_type`` ``ABSOLUTE``/``QUALIFIED`` only; hierarchy-r
   a trailing ``(2024)``, letter-suffix sections (``1613a``, ``77aa``, ``1749aaa``),
   underscore tails (``222e_2``), subsections (``§ 1983(a)(2)``), and the qualified
   ``section 1983 of title 42``.
-* CFR (``cfr_grammar_v2``) — ``17 CFR 240.10b-5``, ``5 C.F.R. § 330.601``, hyphen/letter
+* CFR (``cfr_grammar_v3``) — ``17 CFR 240.10b-5``, ``5 C.F.R. § 330.601``, hyphen/letter
   sections (``1864.0-3``), letter-suffixed parts (``261a.1``), hyphenated FPMR parts
   (``101-6.2104``), a trailing ``(2026)``, and ``section 240.10b-5 of title 17``. Unlike
-  USC, a CFR section's parenthesised/temporary material is part of its identity, so v2
-  keeps it in ``parsed_section`` (``41.6151(a)-1``, ``240.11a1-4(T)``).
+  USC, a CFR section's parenthesised/temporary material is part of its identity, so the CFR
+  grammar keeps it in ``parsed_section`` (``41.6151(a)-1``, ``240.11a1-4(T)``). A few parts
+  number their sections without the ``part.section`` dot (14 CFR Part 241: ``1-1``, ``03``);
+  those parse with ``parsed_part=None`` at reduced confidence.
 
 **Self-check (the Stage-B metric on the dataset's own labels).** Every USC/CFR row carries
 a regular ``citation`` / ``citation_short`` string *and* structured ``title_number`` /
@@ -120,8 +122,9 @@ class ParsedCitation:
             raise ValueError("parser_method must be non-empty")
         if not (0.0 <= self.parser_confidence <= 1.0):
             raise ValueError("parser_confidence must be in [0, 1]")
-        if self.parsed_corpus == FederalCorpus.CFR and self.parsed_part is None:
-            raise ValueError("a CFR citation must carry parsed_part")
+        # A USC citation never carries a part. A CFR citation usually does, but the
+        # dotless forms (14 CFR Part 241) legitimately leave it None — the part is not in
+        # the citation string — so CFR part is optional, not required.
         if self.parsed_corpus == FederalCorpus.USC and self.parsed_part is not None:
             raise ValueError("a USC citation has no part")
 
@@ -144,9 +147,9 @@ _YEAR = r"(?:\s*\((?:19|20)\d{2}\))?"
 # *separate* pointer — the dataset's section_number is the bare number — so USC keeps the
 # ``_USC_SUBSEC`` group and strips it out of ``parsed_section``.
 _USC_SECTION = r"(?P<section>\d+[A-Za-z]*(?:_\d+)?)"
-# CFR section (cfr_grammar_v2): part.rest, where the ENTIRE token is the section identity.
+# CFR section (cfr_grammar_v3): part.rest, where the ENTIRE token is the section identity.
 # Unlike USC, the dataset stores parenthesised/temporary material *inside* section_number
-# (26 CFR § 41.6151(a)-1, 17 CFR § 240.11a1-4(T)), so v2 captures embedded ``(...)`` and a
+# (26 CFR § 41.6151(a)-1, 17 CFR § 240.11a1-4(T)), so it captures embedded ``(...)`` and a
 # trailing ``(T)`` as part of the section rather than stripping them. The part may carry a
 # letter suffix (261a.1) or hyphenated FPMR segments (101-6.2104); the token must end on an
 # alphanumeric or ``)`` so sentence punctuation in free text is not swallowed. A ``(YYYY)``
@@ -171,23 +174,43 @@ _CFR_QUALIFIED = re.compile(
     rf"[Ss]ection\s+{_CFR_SECTION}\s+of\s+[Tt]itle\s+(?P<title>\d+)"
     rf"(?:,?\s+Code\s+of\s+Federal\s+Regulations)?",
 )
+# Dotless CFR section (cfr_grammar_v3): a few parts number their sections WITHOUT the
+# standard `part.section` dot — 14 CFR Part 241 (airline Uniform System of Accounts) uses
+# `1-1`, `03`, `19-4`, etc. The citation string then carries only the section, so the part
+# is NOT determinable from the string (``parsed_part=None``) and confidence is reduced. The
+# form is inherently more ambiguous (a bare number can also be a part reference), so it is
+# only tried after the dotted forms fail, and is deliberately excluded from the free-text
+# detector (``detect_mentions``) where that ambiguity would produce false positives.
+_CFR_DOTLESS = re.compile(
+    rf"(?P<title>\d+)\s+{_CFR_CODE}\s*(?:{_SECTION_SIGN}\s*)?"
+    rf"(?P<section>\d+[A-Za-z]?(?:-\d+[A-Za-z]?)*){_YEAR}",
+)
 
 # Confidence: a fully-punctuated canonical form is 1.0; the qualified prose form is
-# slightly lower (more ways to be fooled), but still deterministic.
+# slightly lower; a dotless CFR section is lower still (no part, more ambiguous), but the
+# parse of what IS present stays deterministic.
 _ABSOLUTE_CONFIDENCE = 1.0
 _QUALIFIED_CONFIDENCE = 0.9
+_DOTLESS_CONFIDENCE = 0.75
 
 
-def _parsed_from_absolute(m: re.Match, corpus: FederalCorpus, method: str) -> ParsedCitation:
+def _parsed_from_absolute(
+    m: re.Match,
+    corpus: FederalCorpus,
+    method: str,
+    confidence: float = _ABSOLUTE_CONFIDENCE,
+) -> ParsedCitation:
     return ParsedCitation(
         parsed_corpus=corpus,
         parsed_title=m.group("title"),
         parsed_section=m.group("section"),
-        parsed_part=m.group("part") if corpus == FederalCorpus.CFR else None,
+        # ``.get`` (not ``.group``) so the dotless CFR form, which has no ``part`` group,
+        # yields ``parsed_part=None`` rather than raising.
+        parsed_part=m.groupdict().get("part") if corpus == FederalCorpus.CFR else None,
         parsed_subsection=m.groupdict().get("subsection") or None,
         reference_type=ReferenceType.ABSOLUTE,
         parser_method=method,
-        parser_confidence=_ABSOLUTE_CONFIDENCE,
+        parser_confidence=confidence,
     )
 
 
@@ -221,13 +244,23 @@ def parse_usc_citation(text: str) -> ParsedCitation | None:
 
 
 def parse_cfr_citation(text: str) -> ParsedCitation | None:
-    """Parse a single CFR citation string, or abstain (``None``)."""
+    """Parse a single CFR citation string, or abstain (``None``).
+
+    Dotted ``part.section`` forms are tried first; only if those fail is the dotless form
+    (14 CFR Part 241's ``1-1`` / ``03`` numbering) attempted, at reduced confidence with
+    ``parsed_part=None`` — the part is not present in the string to recover.
+    """
     m = _fullmatch(_CFR_ABSOLUTE, text)
     if m:
-        return _parsed_from_absolute(m, FederalCorpus.CFR, "cfr_grammar_v2")
+        return _parsed_from_absolute(m, FederalCorpus.CFR, "cfr_grammar_v3")
     m = _fullmatch(_CFR_QUALIFIED, text)
     if m:
-        return _parsed_from_qualified(m, FederalCorpus.CFR, "cfr_grammar_v2")
+        return _parsed_from_qualified(m, FederalCorpus.CFR, "cfr_grammar_v3")
+    m = _fullmatch(_CFR_DOTLESS, text)
+    if m:
+        return _parsed_from_absolute(
+            m, FederalCorpus.CFR, "cfr_grammar_v3", confidence=_DOTLESS_CONFIDENCE
+        )
     return None
 
 
@@ -384,7 +417,7 @@ def detect_mentions(
     spans: list[tuple[int, int]] = []
 
     for pattern, corpus, method in (
-        (_DETECT_CFR, FederalCorpus.CFR, "cfr_grammar_v2"),
+        (_DETECT_CFR, FederalCorpus.CFR, "cfr_grammar_v3"),
         (_DETECT_USC, FederalCorpus.USC, "usc_grammar_v1"),
     ):
         for m in pattern.finditer(text):
@@ -551,16 +584,18 @@ citation_short  =  <title> <CODE> § <section>
 | USC | digits + optional letters + optional `_digits` | `1983`, `1613a`, `77aa`, `1749aaa`, `222e_2` |
 | CFR | `part.rest`; part may carry a letter (`261a`) or hyphens (`101-6`); rest carries digits/letters/hyphens and **embedded** `(...)` / `(T)` | `330.601`, `240.10b-5`, `1864.0-3`, `41.6151(a)-1`, `240.11a1-4(T)` |
 
-The load-bearing USC-vs-CFR asymmetry (why the CFR producer is `cfr_grammar_v2`): in USC a
+The load-bearing USC-vs-CFR asymmetry (why the CFR producer is `cfr_grammar_v3`): in USC a
 subsection like `(a)` is a *separate* pointer and never appears in `section_number`; in CFR
 the parenthesised/`(T)` material is *part of the section identity* and lives inside
 `section_number`, so v2 keeps it in `parsed_section`.
 
 Beyond the `§` forms, the grammar also accepts the variants people write — `42 USC 1983`,
 `42 U.S.C.A. § 1983`, `Section 1983 of Title 42` — but the two fields above are the dataset's
-own canonical shape, which is what makes them a clean full-corpus labelled set. The only
-citation strings that do not fit are the abstentions listed above (14 CFR Part 241's dotless
-numbering and a handful of source typos).
+own canonical shape, which is what makes them a clean full-corpus labelled set. A few parts
+(14 CFR Part 241) number their sections without the `part.section` dot (`1-1`, `03`, `19-4`);
+those parse with `parsed_part=None` at reduced confidence, since the part is not present in
+the citation to recover. The only strings that still do not fit are a handful of malformed
+source citations (stray spaces, `(Rule N)` annotations) — abstention there is correct.
 """
 
 
@@ -571,7 +606,7 @@ def render_report(
     A = lines.append
     A("# M2 citation-parser self-check")
     A("")
-    A(f"Snapshot: `{snapshot}`. Parser methods: `usc_grammar_v1`, `cfr_grammar_v2`.")
+    A(f"Snapshot: `{snapshot}`. Parser methods: `usc_grammar_v1`, `cfr_grammar_v3`.")
     A("")
     A("Each USC/CFR row's own `citation_short` (or `citation`) is parsed and its")
     A("`(title, section)` compared to the row's structured `title_number` /")
