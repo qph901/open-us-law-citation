@@ -318,6 +318,29 @@ def test_single_section_sign_does_not_start_a_list():
     assert got == {("42", "1983"), ("5", "552")}
 
 
+def test_detect_qualified_prose_form():
+    ms = detect_mentions("Liability under Section 1983 of Title 42, United States Code, is settled.")
+    assert len(ms) == 1
+    assert (ms[0].parsed.parsed_title, ms[0].parsed.parsed_section) == ("42", "1983")
+    assert ms[0].parsed.reference_type == ReferenceType.QUALIFIED
+    cfr = detect_mentions("The rule in section 240.10b-5 of title 17, Code of Federal Regulations.")
+    assert (cfr[0].parsed.parsed_corpus, cfr[0].parsed.parsed_section) == (
+        FederalCorpus.CFR, "240.10b-5")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Section 1983 of title 42 of the lease agreement governs.",  # no code name
+        "Section 5 of title I of the Act controls here.",            # non-numeric title, no code
+        "See section 5 of the Agreement.",                          # no 'of title N'
+    ],
+)
+def test_detect_qualified_requires_code_name(text):
+    """Precision guard: the qualified form fires ONLY with the spelled-out code name."""
+    assert detect_mentions(text) == []
+
+
 def test_detection_report_is_stable():
     r1 = render_detection_report()
     r2 = render_detection_report()

@@ -398,10 +398,25 @@ def build_reference_mention(
     )
 
 
-# Detection scan: the same grammar, unanchored, over free text. USC/CFR absolute forms
-# only (the qualified prose form is detection-noisy; kept to explicit parsing for now).
+# Detection scan: the same grammar, unanchored, over free text.
 _DETECT_USC = re.compile(_USC_ABSOLUTE.pattern)
 _DETECT_CFR = re.compile(_CFR_ABSOLUTE.pattern)
+
+# Qualified prose form in free text ("section 1983 of title 42, United States Code"). Unlike
+# explicit parsing — where the reader already believes the string is a citation, so the code
+# name is optional — DETECTION must require the spelled-out code name (or its abbreviation) to
+# stay precise: "section 5 of title I of the Act" / "section 1983 of title 42 of the lease"
+# are NOT citations and carry no such tail, so they never fire here.
+_USC_CODE_NAME = r"(?:United\s+States\s+Code|U\.?\s?S\.?\s?C\.?(?:\s?A\.?)?)"
+_CFR_CODE_NAME = r"(?:Code\s+of\s+Federal\s+Regulations|C\.?\s?F\.?\s?R\.?)"
+_DETECT_USC_QUALIFIED = re.compile(
+    rf"[Ss]ection\s+{_USC_SECTION}{_USC_SUBSEC}\s+of\s+[Tt]itle\s+(?P<title>\d+)"
+    rf"(?:\s+of\s+the)?,?\s+{_USC_CODE_NAME}"
+)
+_DETECT_CFR_QUALIFIED = re.compile(
+    rf"[Ss]ection\s+{_CFR_SECTION}\s+of\s+[Tt]itle\s+(?P<title>\d+)"
+    rf"(?:\s+of\s+the)?,?\s+{_CFR_CODE_NAME}"
+)
 
 # Enumerated `§§ a, b, c` lists. A **plural** section sign (``§§``, ``Sections``, ``Secs``)
 # in the primary match licenses consuming further comma/and-separated **bare** sections that
@@ -467,6 +482,18 @@ def detect_mentions(
                     section, tm.start("section"), tm.end("section"),
                 )
                 pos = tm.end()
+
+    # Qualified prose form ("section 1983 of title 42, United States Code"), code name
+    # mandatory. Run after the absolute pass; overlaps with an absolute span are skipped.
+    for pattern, corpus, method in (
+        (_DETECT_CFR_QUALIFIED, FederalCorpus.CFR, "cfr_grammar_v3"),
+        (_DETECT_USC_QUALIFIED, FederalCorpus.USC, "usc_grammar_v1"),
+    ):
+        for m in pattern.finditer(text):
+            if any(m.start() < e and s < m.end() for s, e in spans):
+                continue
+            _emit(_parsed_from_qualified(m, corpus, method), m.group(0), m.start(), m.end())
+
     mentions.sort(key=lambda mm: (mm.start_char, mm.end_char))
     return mentions
 
@@ -754,6 +781,13 @@ DETECTION_GOLD: tuple[tuple[str, tuple[_Cite, ...]], ...] = (
     # mis-attributed to title 42, and 5 U.S.C. § 552 must still be found on its own.
     ("Under 42 U.S.C. §§ 1983, 1985 and 5 U.S.C. § 552, relief lies.",
      (("usc", "42", "1983"), ("usc", "42", "1985"), ("usc", "5", "552"))),
+    # qualified prose form — code name present, so it fires
+    ("Liability under Section 1983 of Title 42, United States Code, is settled.",
+     (("usc", "42", "1983"),)),
+    ("As defined in section 552 of title 5 of the United States Code, records.",
+     (("usc", "5", "552"),)),
+    ("The rule in section 240.10b-5 of title 17, Code of Federal Regulations, applies.",
+     (("cfr", "17", "240.10b-5"),)),
     # --- adversarial distractors: nothing should be detected ---
     ("Section 5 of the Agreement dated January 2024.", ()),
     ("Public Law 118-274 amended the statute.", ()),
@@ -764,6 +798,9 @@ DETECTION_GOLD: tuple[tuple[str, tuple[_Cite, ...]], ...] = (
     ("A petition under Chapter 11 of the Bankruptcy Code.", ()),
     ("Regulated under 40 CFR generally, with no section given.", ()),
     ("Please call 1-800-555-1983 for assistance.", ()),
+    # qualified-shaped but NOT a citation: no code name -> must not fire
+    ("Section 1983 of title 42 of the lease agreement governs.", ()),
+    ("Section 5 of title I of the Act controls here.", ()),
     # --- mixed: one real citation alongside citation-shaped noise ---
     ("Under 42 U.S.C. § 1983, not Section 5 of the lease, the claim lies.",
      (("usc", "42", "1983"),)),
@@ -882,10 +919,12 @@ def render_detection_report(
     A(f"Recorded after commissioning (not hardcoded legal rules): precision "
       f"`>= {_DETECTION_MIN_PRECISION:.2f}`, recall `>= {_DETECTION_MIN_RECALL:.2f}`. The")
     A("detector is deliberately precision-first — abstaining on ambiguous prose beats a")
-    A("false citation edge. The free-text scan covers ABSOLUTE citations, including")
-    A("enumerated `§§ a, b` lists (each member emitted, a following bare number that is")
-    A("itself a new citation is not mis-attributed); the qualified prose form (`section")
-    A("1983 of title 42`) and full corpus-scale in-body detection are deferred.")
+    A("false citation edge. The free-text scan covers ABSOLUTE citations, enumerated")
+    A("`§§ a, b` lists (each member emitted; a following bare number that is itself a new")
+    A("citation is not mis-attributed), and the qualified prose form (`section 1983 of")
+    A("title 42, United States Code`) — which fires only when the spelled-out code name is")
+    A("present, so `section 5 of title I of the Act` never does. Full corpus-scale in-body")
+    A("detection (over the `text` column) is deferred — it overlaps M4.")
     A("")
     return "\n".join(lines) + "\n"
 

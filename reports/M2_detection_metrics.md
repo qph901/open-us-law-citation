@@ -8,13 +8,13 @@ phone numbers) whose expected result is empty. A detection matches a gold citati
 its `(corpus, title, section)` identity. Gold labels are independent ground truth,
 never derived from the detector's own output.
 
-Gold set: **31 passages**, **31 citations**, **9 pure-distractor passages**.
+Gold set: **36 passages**, **34 citations**, **11 pure-distractor passages**.
 
 | Corpus | TP | FP | FN | Precision | Recall | F1 |
 |---|---:|---:|---:|---:|---:|---:|
-| USC | 20 | 0 | 0 | 1.000 | 1.000 | 1.000 |
-| CFR | 11 | 0 | 0 | 1.000 | 1.000 | 1.000 |
-| **all** | 31 | 0 | 0 | 1.000 | 1.000 | 1.000 |
+| USC | 22 | 0 | 0 | 1.000 | 1.000 | 1.000 |
+| CFR | 12 | 0 | 0 | 1.000 | 1.000 | 1.000 |
+| **all** | 34 | 0 | 0 | 1.000 | 1.000 | 1.000 |
 
 ## False positives (precision failures)
 
@@ -28,8 +28,10 @@ None.
 
 Recorded after commissioning (not hardcoded legal rules): precision `>= 1.00`, recall `>= 0.98`. The
 detector is deliberately precision-first — abstaining on ambiguous prose beats a
-false citation edge. The free-text scan covers ABSOLUTE citations, including
-enumerated `§§ a, b` lists (each member emitted, a following bare number that is
-itself a new citation is not mis-attributed); the qualified prose form (`section
-1983 of title 42`) and full corpus-scale in-body detection are deferred.
+false citation edge. The free-text scan covers ABSOLUTE citations, enumerated
+`§§ a, b` lists (each member emitted; a following bare number that is itself a new
+citation is not mis-attributed), and the qualified prose form (`section 1983 of
+title 42, United States Code`) — which fires only when the spelled-out code name is
+present, so `section 5 of title I of the Act` never does. Full corpus-scale in-body
+detection (over the `text` column) is deferred — it overlaps M4.
 
