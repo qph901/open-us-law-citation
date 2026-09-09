@@ -50,9 +50,38 @@ SUCCESSOR_RE = re.compile(
     re.I,
 )
 
-# The OLRC editorial/historical apparatus is appended to the operative text under
-# headers like these. Splitting on the first one isolates the operative prefix.
-NOTES_SPLIT_RE = re.compile(r"\n(?:Editorial Notes|Statutory Notes|Amendments)\n")
+# The OLRC editorial/historical apparatus is appended to the operative text under these
+# headers, each alone on its own line. Splitting on the FIRST one isolates the operative
+# prefix, whose hash is what classifies a row amended vs unchanged.
+#
+# ENUMERATED FROM THE CORPUS, not guessed. The previous alternation was
+# ``Editorial Notes|Statutory Notes|Amendments`` and left 15,683 of 54,853 federal statute
+# bodies (28.6%) with apparatus hashed as operative text — 11,421 where nothing matched at
+# all and 4,262 where the split fired later than the true apparatus start. The single
+# largest cause: OLRC's real header is "Statutory Notes and Related Subsidiaries", so the
+# bare ``Statutory Notes`` branch never fired on it (31,078 occurrences), and
+# "Historical and Revision Notes" (first header in 7,500 bodies) was absent entirely.
+#
+# Longest-first so a prefix branch cannot pre-empt a longer real header — Python's
+# alternation takes the first branch that matches, not the longest.
+NOTES_HEADERS = sorted(
+    (
+        "Editorial Notes",
+        "Statutory Notes and Related Subsidiaries",
+        "Statutory Notes and Executive Documents",
+        "Notes and Related Subsidiaries",
+        "Historical and Revision Notes",
+        "Amendments Not Shown in Text",
+        "Amendments",
+        "References in Text",
+        "Codification",
+    ),
+    key=len,
+    reverse=True,
+)
+NOTES_SPLIT_RE = re.compile(
+    r"\n(?:" + "|".join(re.escape(h) for h in NOTES_HEADERS) + r")\n"
+)
 
 
 def _operative(text: str | None) -> str:
@@ -208,7 +237,7 @@ def render(d: dict, old_label: str, new_label: str, name: str) -> str:
             f"Of them, **{d['amended_grew']:,} grew and {d['amended_shrank']:,} shrank** — the "
             f"change is essentially **append-only**, and the amended text grew **{grow_pct:+.1f}%** "
             f"in total characters. At least **{d['amended_op_identical']:,} ({op_pct:.0f}%)** have "
-            f"an **identical operative body** once the OLRC `Editorial Notes / Statutory Notes` "
+            f"an **identical operative body** once the OLRC editorial/historical "
             f"apparatus is stripped — i.e. only the historical/editorial notes were expanded "
             f"between snapshots, not the law.\n"
         )

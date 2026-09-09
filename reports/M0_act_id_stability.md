@@ -36,7 +36,7 @@ _`removed = 0` across every corpus ⇒ every `act_id` present in the old snapsho
 
 ## What the text changes actually are (caveat for `text_hash`)
 
-The 26,426 'amended' rows are **not** all real legal amendments. Of them, **26,426 grew and 0 shrank** — the change is essentially **append-only**, and the amended text grew **+24.3%** in total characters. At least **5,381 (20%)** have an **identical operative body** once the OLRC `Editorial Notes / Statutory Notes` apparatus is stripped — i.e. only the historical/editorial notes were expanded between snapshots, not the law.
+The 26,426 'amended' rows are **not** all real legal amendments. Of them, **26,426 grew and 0 shrank** — the change is essentially **append-only**, and the amended text grew **+24.3%** in total characters. At least **7,290 (28%)** have an **identical operative body** once the OLRC editorial/historical apparatus is stripped — i.e. only the historical/editorial notes were expanded between snapshots, not the law.
 
 > **Design implication (M1):** the `text` field bundles operative statutory text with a volatile editorial-notes apparatus. Hashing the whole field makes ~half the corpus look 'amended' between snapshots and would poison both change-detection and text-similarity lineage. **Hash (and diff) the operative body separately from the notes.** `text_hash` over raw `text` is a provenance/integrity hash, not a legal-change signal.
 
@@ -90,7 +90,7 @@ Of 1,815 disposition-status rows checked, 393 state a successor number inline in
 
 ## What the text changes actually are (caveat for `text_hash`)
 
-The 8,882 'amended' rows are **not** all real legal amendments. Of them, **8,819 grew and 57 shrank** — the change is essentially **append-only**, and the amended text grew **+9.4%** in total characters. At least **0 (0%)** have an **identical operative body** once the OLRC `Editorial Notes / Statutory Notes` apparatus is stripped — i.e. only the historical/editorial notes were expanded between snapshots, not the law.
+The 8,882 'amended' rows are **not** all real legal amendments. Of them, **8,819 grew and 57 shrank** — the change is essentially **append-only**, and the amended text grew **+9.4%** in total characters. At least **0 (0%)** have an **identical operative body** once the OLRC editorial/historical apparatus is stripped — i.e. only the historical/editorial notes were expanded between snapshots, not the law.
 
 > **Design implication (M1):** the `text` field bundles operative statutory text with a volatile editorial-notes apparatus. Hashing the whole field makes ~half the corpus look 'amended' between snapshots and would poison both change-detection and text-similarity lineage. **Hash (and diff) the operative body separately from the notes.** `text_hash` over raw `text` is a provenance/integrity hash, not a legal-change signal.
 
@@ -143,7 +143,7 @@ Of 0 disposition-status rows checked, 0 state a successor number inline in the t
 
 ## What the text changes actually are (caveat for `text_hash`)
 
-The 937 'amended' rows are **not** all real legal amendments. Of them, **933 grew and 4 shrank** — the change is essentially **append-only**, and the amended text grew **+8.8%** in total characters. At least **0 (0%)** have an **identical operative body** once the OLRC `Editorial Notes / Statutory Notes` apparatus is stripped — i.e. only the historical/editorial notes were expanded between snapshots, not the law.
+The 937 'amended' rows are **not** all real legal amendments. Of them, **933 grew and 4 shrank** — the change is essentially **append-only**, and the amended text grew **+8.8%** in total characters. At least **0 (0%)** have an **identical operative body** once the OLRC editorial/historical apparatus is stripped — i.e. only the historical/editorial notes were expanded between snapshots, not the law.
 
 > **Design implication (M1):** the `text` field bundles operative statutory text with a volatile editorial-notes apparatus. Hashing the whole field makes ~half the corpus look 'amended' between snapshots and would poison both change-detection and text-similarity lineage. **Hash (and diff) the operative body separately from the notes.** `text_hash` over raw `text` is a provenance/integrity hash, not a legal-change signal.
 
