@@ -52,11 +52,26 @@ _ECFR_TITLE_RE = re.compile(r"title[-_ ]*0*(\d+)", re.I)
 # the one case where the eCFR structure API's own `reserved` flag disagrees, and the XML is
 # right -- 23 CFR 1270.5 is an empty placeholder that the API reports as not reserved.
 _ECFR_RESERVED_RE = re.compile(r"\[\s*reserved\s*\]", re.I)
+# The first bounded digit run in a USLM <docNumber>. Named rather than inline so it is
+# visible to a pattern survey and testable on its own; its result is range-checked.
+_USLM_DOCNUMBER_RE = re.compile(r"\b(\d+)\b")
 
 
 class FederalCorpus(StrEnum):
     USC = "usc"
     CFR = "cfr"
+
+
+# The US Code has 54 titles; the CFR has 50. A title outside its code's range cannot name
+# real law. Used by the official-source projections below AND by the M2 grammar, which
+# re-exports these — one definition, so a citation and an oracle key cannot disagree about
+# what a valid title is.
+TITLE_MAX = {FederalCorpus.USC: 54, FederalCorpus.CFR: 50}
+
+
+def title_in_range(corpus: FederalCorpus, title: str) -> bool:
+    """Is ``title`` a title number that exists in ``corpus``?"""
+    return str(title).isdigit() and 1 <= int(title) <= TITLE_MAX[corpus]
 
 
 class StructuralStatus(StrEnum):
@@ -945,10 +960,17 @@ def _uslm_provisions(
     root = ET.fromstring(data)
     title = _title_from_name(name, FederalCorpus.USC)
     if title is None:
+        # Fallback when the filename does not carry the title: read `<docNumber>`. The
+        # pattern takes the first bounded digit run, so it also accepts junk if a future
+        # release point puts something else there — hence the domain bound. The US Code has
+        # 54 titles, so a "title" outside 1-54 is not a title, and accepting one would
+        # anchor every provision in the file to a denominator key that cannot exist.
+        # NOTE: unlike the eCFR path above this is NOT yet validated against real USLM
+        # bytes (uscode.house.gov has been unreachable); it is bounded and unit-tested only.
         for element in root.iter():
             if _local_name(element.tag) in ("docnumber", "docnum"):
-                match = re.search(r"\b(\d+)\b", "".join(element.itertext()))
-                if match:
+                match = _USLM_DOCNUMBER_RE.search("".join(element.itertext()))
+                if match and title_in_range(FederalCorpus.USC, str(int(match.group(1)))):
                     title = str(int(match.group(1)))
                     break
     if title is None:
@@ -990,14 +1012,28 @@ def _ecfr_provisions(
         head = _direct_child(element, "head")
         head_text = "".join(head.itertext()) if head is not None else ""
         reserved = bool(_ECFR_RESERVED_RE.search(head_text))
+        # The section number is the `N` attribute, full stop. It is present on 100% of
+        # section elements in the staged 2026-08-26 edition (54,129 of 54,129 across
+        # titles 1-16), and it is authoritative.
+        #
+        # There used to be a regex fallback that parsed the number out of the `<HEAD>`
+        # (`§ 102.1 Purpose.`). It never ran, and it was wrong where it would have: on the
+        # same sample it disagreed with `N` on 20 elements — capturing a trailing period
+        # (`752.1.`), a section sign (`120.441-§`), or only the first half of a reserved
+        # range (`1777.5` for `1777.5 through 1777.10`). A key like `752.1.` matches no
+        # dataset row, so the provision would have scored `missing` on a punctuation mark.
+        #
+        # Worse, when that fallback produced nothing the element was silently skipped —
+        # dropping a section out of the coverage DENOMINATOR with nothing in the record
+        # saying so. An edition without `N` is a schema change, so it now fails loudly.
         section = element.attrib.get("N") or element.attrib.get("n")
-        if not section:
-            section = head_text
-        match = re.search(r"\N{SECTION SIGN}{1,2}\s*([^\s—–]+)", section)
-        if match:
-            section = match.group(1)
-        if not section.strip():
-            continue
+        if not section or not section.strip():
+            raise ValueError(
+                f"{name}: a TYPE=SECTION element has no N attribute "
+                f"(head {head_text.strip()[:60]!r}). The eCFR schema changed; refusing to "
+                f"guess the section number from its heading."
+            )
+        section = section.strip()
         official_id = element.attrib.get("ID") or element.attrib.get("id")
         official_id = official_id or f"cfr-title-{title}-section-{section}"
         yield OfficialProvision.from_text(

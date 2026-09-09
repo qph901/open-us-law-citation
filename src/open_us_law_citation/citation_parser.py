@@ -55,7 +55,7 @@ from typing import Any, Iterator, Sequence
 
 import pyarrow.parquet as pq
 
-from .coverage_baseline import FederalCorpus
+from .coverage_baseline import TITLE_MAX, FederalCorpus, title_in_range
 from .derived import (
     ArtifactInput,
     ArtifactType,
@@ -92,26 +92,6 @@ class ReferenceType(StrEnum):
 # ---------------------------------------------------------------------------
 # Structured parse.
 # ---------------------------------------------------------------------------
-
-# The US Code has 54 titles; the CFR has 50. A citation naming a title outside its code's
-# range cannot refer to real law, so it is rejected rather than emitted — the M2 grammar's
-# only *semantic* constraint, and the one place where knowing the corpus beats pure syntax.
-#
-# It exists because `(?P<title>\d+)` accepts any adjacent digit run, and at corpus scale the
-# snapshot's text supplies plenty that are not titles: flattened table cells (`$122,661\nU.S.C.
-# 362(a)`), date columns (`2023\nCFR 2.2`), and bodies whose leading digit was dropped at a
-# line break (`\n0 CFR 264.100`, really 40 CFR — see reports/M2_in_body_detection.md).
-#
-# It is a floor, not a cure: corruption that yields an *in-range* wrong title is invisible
-# to it. Rejecting is the abstain-rather-than-guess outcome — the missing digit is not
-# recoverable from the text, so repairing the citation would mean inventing it.
-TITLE_MAX = {FederalCorpus.USC: 54, FederalCorpus.CFR: 50}
-
-
-def title_in_range(corpus: FederalCorpus, title: str) -> bool:
-    """Is ``title`` a title number that exists in ``corpus``?"""
-    return str(title).isdigit() and 1 <= int(title) <= TITLE_MAX[corpus]
-
 
 @dataclass(frozen=True, slots=True)
 class ParsedCitation:

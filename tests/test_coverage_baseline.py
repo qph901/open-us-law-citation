@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from open_us_law_citation.coverage_baseline import (
+    TITLE_MAX,
     CurrencyStatus,
     DatasetCandidate,
     DatasetEvidence,
@@ -28,6 +29,7 @@ from open_us_law_citation.coverage_baseline import (
     render_markdown,
     render_official_inventory,
     text_fingerprints,
+    title_in_range,
 )
 from open_us_law_citation.coverage_baseline import (
     main as coverage_main,
@@ -465,3 +467,86 @@ def test_reserved_stays_reserved_even_when_the_dataset_carries_a_row():
     counts = coverage_counts(baseline.entries)
     assert counts["expected"] == 0 and counts["reserved"] == 1
     assert coverage_rates(counts)["represented_percent"] is None
+
+
+def test_ecfr_section_number_comes_from_N_never_from_the_heading(tmp_path: Path):
+    """`N` is authoritative and present on 100% of real section elements (54,129 of 54,129
+    across staged titles 1-16 at the 2026-08-26 edition).
+
+    A regex over the `<HEAD>` used to be the fallback. On that same real sample it would
+    have disagreed with `N` on 20 elements — the heads below are three of them. A key like
+    `752.1.` matches no dataset row, so the provision would have scored `missing` because
+    of a punctuation mark.
+    """
+    source = tmp_path / "title-12.xml"
+    source.write_text(
+        """<ECFR TITLE="12"><DIV5 TYPE="PART" N="752">
+        <DIV8 TYPE="SECTION" N="752.1"><HEAD>§ 752.1.   What is the scope.</HEAD>
+        <P>Text.</P></DIV8>
+        <DIV8 TYPE="SECTION" N="120.441-§ 120.447"><HEAD>§ 120.441-§ 120.447   [Reserved]</HEAD></DIV8>
+        <DIV8 TYPE="SECTION" N="1777.5 through 1777.10">
+        <HEAD>§§ 1777.5 through 1777.10   [Reserved]</HEAD></DIV8>
+        </DIV5></ECFR>"""
+    )
+    inventory = inventory_from_xml(
+        source_path=source, corpus=FederalCorpus.CFR, oracle_edition="oracle:test:ecfr",
+        oracle_kind=OracleKind.ECFR, edition_date="2026-08-26",
+        source_url="https://official.example/title-{title}.xml",
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        currency_basis="point-in-time eCFR fixture",
+    )
+    sections = [p.key.section for p in inventory.provisions]
+    # Exactly N, with no trailing period, no captured section sign, no truncated range.
+    assert sections == ["752.1", "120.441-§ 120.447", "1777.5 through 1777.10"]
+
+
+def test_a_section_element_without_N_fails_loudly_instead_of_being_skipped(tmp_path: Path):
+    """The old fallback could yield nothing, and the element was then silently skipped —
+    dropping a section out of the coverage denominator with nothing saying so."""
+    source = tmp_path / "title-9.xml"
+    source.write_text(
+        """<ECFR TITLE="9"><DIV5 TYPE="PART" N="1">
+        <DIV8 TYPE="SECTION"><HEAD>§ 1.1   Scope.</HEAD><P>Text.</P></DIV8>
+        </DIV5></ECFR>"""
+    )
+    with pytest.raises(ValueError, match="no N attribute"):
+        inventory_from_xml(
+            source_path=source, corpus=FederalCorpus.CFR, oracle_edition="oracle:test:ecfr",
+            oracle_kind=OracleKind.ECFR, edition_date="2026-08-26",
+            source_url="https://official.example/title-{title}.xml",
+            source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+            currency_basis="point-in-time eCFR fixture",
+        )
+
+
+def test_uslm_docnumber_title_is_bounded_by_the_real_title_range(tmp_path: Path):
+    """The USC has 54 titles, so a docNumber digit run outside 1-54 is not a title.
+
+    Accepting one would anchor every provision in the file to a denominator key that
+    cannot exist. Not yet validated against real USLM bytes (OLRC unreachable), so this
+    pins the bound rather than the extraction.
+    """
+    source = tmp_path / "unnamed.xml"   # filename carries no title -> docNumber fallback
+    source.write_text(
+        """<uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0">
+        <meta><docNumber>118</docNumber></meta>
+        <section><num value="1">§ 1.</num><content>Text.</content></section>
+        </uscDoc>"""
+    )
+    with pytest.raises(ValueError, match="cannot determine USC title"):
+        inventory_from_xml(
+            source_path=source, corpus=FederalCorpus.USC, oracle_edition="oracle:test:uslm",
+            oracle_kind=OracleKind.USLM, edition_date="2025-01-06",
+            source_url="https://official.example/usc.zip",
+            source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+            currency_basis="USLM fixture",
+        )
+
+
+def test_title_range_has_one_definition_shared_with_the_m2_grammar():
+    """A citation and an oracle key must not disagree about what a valid title is."""
+    from open_us_law_citation.citation_parser import TITLE_MAX as grammar_max
+
+    assert grammar_max is TITLE_MAX
+    assert title_in_range(FederalCorpus.USC, "54") and not title_in_range(FederalCorpus.USC, "55")
+    assert title_in_range(FederalCorpus.CFR, "50") and not title_in_range(FederalCorpus.CFR, "51")
