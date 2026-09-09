@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import polars as pl
 
-from open_us_law_coverage.snapshot_diff import _hash_one, diff
+from open_us_law_citation.snapshot_diff import _hash_one, diff
 
 
 def _frame(rows: list[tuple[str, str | None]]) -> pl.DataFrame:

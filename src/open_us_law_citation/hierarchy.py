@@ -33,7 +33,7 @@ OOM-safe on any corpus.
 
 Regenerate the report::
 
-    uv run python -m open_us_law_coverage.hierarchy \\
+    uv run python -m open_us_law_citation.hierarchy \\
         data/v2026.08_full/us_ca_statutes.parquet \\
         data/v2026.08_full/us_tx_statutes.parquet \\
         data/v2026.08_full/us_oh_regulations.parquet \\

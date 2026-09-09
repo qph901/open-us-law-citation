@@ -23,7 +23,7 @@ CA forces (or confirmation of none), captured **before** M1B freezes interfaces.
 Streams the CA file row-group-bounded (M1A ``iter_source_records``), so it is
 OOM-safe. Regenerate::
 
-    uv run python -m open_us_law_coverage.ca_probe \\
+    uv run python -m open_us_law_citation.ca_probe \\
         data/v2026.08_full/us_ca_statutes.parquet \\
         --snapshot v2026.08 --out reports/M0.5B3_ca_abstraction.md
 """

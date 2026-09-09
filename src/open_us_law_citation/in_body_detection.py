@@ -34,7 +34,7 @@ is byte-stable under any scan order, thread count, or batch size.
 
 Regenerate::
 
-    uv run python -m open_us_law_coverage.in_body_detection \\
+    uv run python -m open_us_law_citation.in_body_detection \\
         data/v2026.08_full/us_federal_statutes.parquet \\
         data/v2026.08_full/us_federal_regulations.parquet \\
         --snapshot v2026.08 --out reports/M2_in_body_detection.md \\

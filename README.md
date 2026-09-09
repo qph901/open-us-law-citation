@@ -1,13 +1,18 @@
-# Open US Law — Measurable Coverage & Retrieval
+# Open US Law Citation
 
-A coverage-first, date-pinned law inventory and retrieval system over the
+A foundation for reliable legal citations: identify the intended provision,
+retrieve faithful text from a specified version, and preserve source evidence
+with explicit uncertainty where a reference cannot be resolved.
+
+The current implementation builds a date-pinned law inventory and retrieval system over the
 [`vaquill/open-us-law`](https://huggingface.co/datasets/vaquill/open-us-law)
 dataset (snapshot **v2026.08**), federally commissioned against official USC and
 CFR inventories. Citation parsing and resolution remain correctness capabilities
 inside that system. See
 [PROPOSAL.md](PROPOSAL.md) for the full design and milestones. Project decisions
 are ordered by [PRIORITIES.md](PRIORITIES.md): law coverage first, retrieval time
-second.
+second. Coverage measures how broadly the system can provide reliable citations;
+the existing milestone order and acceptance criteria remain in effect.
 
 ## Status
 
@@ -57,7 +62,7 @@ second.
   never a reading order. The source-identity contract may freeze with that caveat.
 - **M1A — immutable `CanonicalSourceRecord` core: complete.** Lossless
   serializer in
-  [`src/open_us_law_coverage/source_record.py`](src/open_us_law_coverage/source_record.py),
+  [`src/open_us_law_citation/source_record.py`](src/open_us_law_citation/source_record.py),
   with the golden-fixture acceptance suite in
   [`tests/test_source_record.py`](tests/test_source_record.py) (21 invariants,
   incl. the **boundary test**: a simulated identity/anatomy/hierarchy/quality
@@ -70,7 +75,7 @@ second.
   `uv run pytest`.
 - **M1A.5 — shared derived-artifact foundation: closed, with concrete identity
   producers.** The interpretation-layer contracts in
-  [`src/open_us_law_coverage/derived/`](src/open_us_law_coverage/derived/):
+  [`src/open_us_law_citation/derived/`](src/open_us_law_citation/derived/):
   `DerivedArtifactProvenance` as a multi-input DAG (`artifact_id` is the stable
   derivation address, `generated_at` excluded) **plus a `payload_hash` semantic content
   address and the equal-id/unequal-payload tripwire**; identity as a
@@ -110,7 +115,7 @@ second.
   `act_status`. **M0.5B1 (needs USLM) / CFR-A1 (needs eCFR): not started.**
 - **COV-1A — official federal provision baseline: in progress.** The first
   buildable slice is in
-  [`src/open_us_law_coverage/coverage_baseline.py`](src/open_us_law_coverage/coverage_baseline.py):
+  [`src/open_us_law_citation/coverage_baseline.py`](src/open_us_law_citation/coverage_baseline.py):
   checksum-gated USLM/eCFR provision inventories, deterministic zero/one/multiple
   crosswalks, separate structural/currency/text outcomes, explicit Federal
   Register exclusion, and byte-stable JSON/Markdown output. The implementation
@@ -119,7 +124,7 @@ second.
   remain pending until the complete official bytes are staged and pinned; no row
   count is presented as coverage.
 - **M2 — federal exact-citation parser (oracle-independent slice): started.**
-  [`src/open_us_law_coverage/citation_parser.py`](src/open_us_law_coverage/citation_parser.py):
+  [`src/open_us_law_citation/citation_parser.py`](src/open_us_law_citation/citation_parser.py):
   a deterministic USC/CFR citation grammar (`usc_grammar_v1` / `cfr_grammar_v3`) →
   structured `ParsedCitation` / `ReferenceMention` (pre-resolution; provenance on the
   interpretation boundary). Resolution (M3), the alias index, and official validation are
@@ -166,11 +171,17 @@ uv run python scripts/download.py            # M0 sample → data/v2026.08/
 The installed command exposes the maintained audit entry points:
 
 ```bash
-uv run open-us-law-coverage --help
-uv run open-us-law-coverage ca-probe --help
-uv run open-us-law-coverage identity-manifest --help
-uv run open-us-law-coverage coverage-baseline --help
+uv run open-us-law-citation --help
+uv run open-us-law-citation ca-probe --help
+uv run open-us-law-citation identity-manifest --help
+uv run open-us-law-citation coverage-baseline --help
 ```
+
+The project was renamed from `open-us-law-coverage`. The distribution is now
+`open-us-law-citation` and the import package is `open_us_law_citation`; the old
+`open-us-law-coverage` **command** is kept as a compatibility alias, but the old
+*import* name is gone, so `import open_us_law_coverage` must be updated to
+`import open_us_law_citation`.
 
 The project is licensed under Apache-2.0. Legal text in the upstream dataset is
 public-domain government material; the dataset's compilation has its own CC BY 4.0
@@ -179,7 +190,7 @@ terms.
 ## Reproduce the M0 report
 
 ```bash
-uv run python -m open_us_law_coverage.recon \
+uv run python -m open_us_law_citation.recon \
   data/v2026.08/*.parquet --snapshot v2026.08 --out reports/M0_recon.md
 ```
 
@@ -188,29 +199,29 @@ The recon harness accepts any file glob, so it can be pointed at the full
 
 ## Layout
 
-- `src/open_us_law_coverage/recon.py` — M0 reconnaissance harness.
-- `src/open_us_law_coverage/identity_collisions.py` — M0.5A `act_id`-collision
+- `src/open_us_law_citation/recon.py` — M0 reconnaissance harness.
+- `src/open_us_law_citation/identity_collisions.py` — M0.5A `act_id`-collision
   analysis (DuckDB, spills to disk so the 11 GB federal `text` column is safe).
-- `src/open_us_law_coverage/segment_provenance.py` — M0.5A.1 collision-provenance
+- `src/open_us_law_citation/segment_provenance.py` — M0.5A.1 collision-provenance
   + segment-order spike (DuckDB `file_row_number`).
-- `src/open_us_law_coverage/source_record.py` — M1A immutable
+- `src/open_us_law_citation/source_record.py` — M1A immutable
   `CanonicalSourceRecord` core (lossless serializer + boundary-enforcing model).
-- `src/open_us_law_coverage/derived/` — M1A.5 shared derived-artifact foundation
+- `src/open_us_law_citation/derived/` — M1A.5 shared derived-artifact foundation
   (provenance DAG + `payload_hash`; identity group/member, classification, quality,
   assembly contracts; and the concrete identity-strategy producers in
   `identity_strategies.py`).
-- `src/open_us_law_coverage/identity_manifest.py` — M1A.5 C.3 deterministic
+- `src/open_us_law_citation/identity_manifest.py` — M1A.5 C.3 deterministic
   full-snapshot identity manifest (DuckDB-streamed structural scan of every file;
   real producers over each colliding identity group).
-- `src/open_us_law_coverage/hierarchy.py` — M0.5B2 hierarchy stress test
+- `src/open_us_law_citation/hierarchy.py` — M0.5B2 hierarchy stress test
   (breadcrumb → normalized `HierarchyNode[]` / `StructuralPath` + topology report).
-- `src/open_us_law_coverage/ca_probe.py` — M0.5B3 CA abstraction-falsification
+- `src/open_us_law_citation/ca_probe.py` — M0.5B3 CA abstraction-falsification
   probe (runs the built artifact types over CA; emits the interface-change list).
-- `src/open_us_law_coverage/coverage_baseline.py` — COV-1A official-inventory
+- `src/open_us_law_citation/coverage_baseline.py` — COV-1A official-inventory
   projection, provision crosswalk, discrepancy manifest, and scorecard renderer.
-- `src/open_us_law_coverage/citation_parser.py` — M2 federal exact-citation grammar
+- `src/open_us_law_citation/citation_parser.py` — M2 federal exact-citation grammar
   (USC/CFR → `ParsedCitation` / `ReferenceMention`) + parse self-check + Stage-A detection.
-- `src/open_us_law_coverage/in_body_detection.py` — M2 corpus-scale in-body detection
+- `src/open_us_law_citation/in_body_detection.py` — M2 corpus-scale in-body detection
   (DuckDB-streamed run of the detector over the whole `text` column + cross-ref agreement
   + an impossible-title precision tripwire).
 - `tests/` — golden-fixture acceptance suite (`uv run pytest`).

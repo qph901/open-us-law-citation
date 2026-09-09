@@ -36,7 +36,7 @@ external oracle. Reads only the small metadata columns (never ``text``), so it i
 
 Regenerate the report::
 
-    uv run python -m open_us_law_coverage.citation_parser \\
+    uv run python -m open_us_law_citation.citation_parser \\
         data/v2026.08_full/us_federal_statutes.parquet \\
         data/v2026.08_full/us_federal_regulations.parquet \\
         --snapshot v2026.08 --out reports/M2_parse_selfcheck.md

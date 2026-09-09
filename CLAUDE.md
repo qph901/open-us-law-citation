@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A **citation detection / parsing / normalization / resolution** subsystem over the gated
+**Open US Law Citation** is a **citation detection / parsing / normalization / resolution** subsystem over the gated
 `vaquill/open-us-law` dataset (snapshot **v2026.08**), commissioned on the US Code. It is the
 deliberate *foundation* of a legal RAG system — the goal is to reliably identify what law a
 citation refers to, with an auditable explanation, **before** any embeddings.
@@ -22,7 +22,7 @@ the source-identity contract has frozen with the *snapshot-observed ordinal* cav
 equal-id/unequal-payload tripwire (D2)** + identity as a **`SourceIdentityGroup`(complete member set)
 + per-member `SourceIdentityMemberAnnotation` (D1, the `DuplicateScope` analogue)** +
 `DocumentClassificationAnnotation`(deterministic) + `QualityAnnotation`(duplicate-only) +
-`SourceDocumentAssembly`(`trivial_single_record_v2`) all live in `src/open_us_law_coverage/derived/`,
+`SourceDocumentAssembly`(`trivial_single_record_v2`) all live in `src/open_us_law_citation/derived/`,
 every model rejecting malformed direct construction. The concrete **`SourceIdentityStrategy` producers
 are built** (`identity_strategies.py`: `usc_act_id_v1`/`state_statute_act_id_v1`/`constitution_act_id_v1`
 1:1, and the regulations collision strategies `cfr_identity_v1`/`federal_register_document_v1`/`state_regulation_v1`
@@ -47,8 +47,8 @@ Package manager is **uv** (Python ≥3.12). There is no `pip`/`python` on PATH �
 
 ```bash
 uv sync                                      # install deps into .venv
-uv run python -m open_us_law_coverage.recon  <glob> --snapshot v2026.08 --out reports/<name>.md
-uv run python -m open_us_law_coverage.snapshot_diff --old <old.parquet> --new <new.parquet> \
+uv run python -m open_us_law_citation.recon  <glob> --snapshot v2026.08 --out reports/<name>.md
+uv run python -m open_us_law_citation.snapshot_diff --old <old.parquet> --new <new.parquet> \
     --old-label v2026.07 --new-label v2026.08 --out reports/M0_act_id_stability.md
 ```
 
@@ -82,19 +82,19 @@ byte-stable committed report; don't invent test commands beyond `uv run pytest`.
 Two standalone reconnaissance harnesses, each pairing with a committed report. Both read Parquet and
 emit Markdown; neither has runtime dependencies on the other:
 
-- `src/open_us_law_coverage/recon.py` → `reports/M0_recon.md` (per-file detail, ≤8 files) and
+- `src/open_us_law_citation/recon.py` → `reports/M0_recon.md` (per-file detail, ≤8 files) and
   `reports/M0_full_snapshot.md` (scalable cross-file summary, auto-selected for >8 files). One
   `analyze_file` per Parquet file produces a `FileReport`; `render_report` / `render_summary` format
   the list. Accepts any file glob, so the same code runs on the 4-file sample or the full 229-file
   snapshot.
-- `src/open_us_law_coverage/snapshot_diff.py` → `reports/M0_act_id_stability.md` (+
+- `src/open_us_law_citation/snapshot_diff.py` → `reports/M0_act_id_stability.md` (+
   `tests/test_snapshot_diff.py`). Diffs the *same* corpus file across two snapshots to answer the one
   question a single snapshot can't: does `act_id` survive text-only amendment (vs. change on
   renumber/transfer)? Determinism/claim-scope hardened (M1A.5 review P4): sampled ids are **sorted**,
   the text hash **preserves the null/empty distinction** (null → a sentinel, not `""`), and the prose
   is narrowed to what set membership actually proves (stated successors are extracted but **not**
   resolved to records; `removed=0` proves only that no old id was dropped, not non-reissue).
-- `src/open_us_law_coverage/identity_collisions.py` → `reports/M0.5A_identity_collisions.md` (M0.5A).
+- `src/open_us_law_citation/identity_collisions.py` → `reports/M0.5A_identity_collisions.md` (M0.5A).
   Enumerates every corpus where `act_id` repeats and classifies each collision group by *phenomenon*
   (ETL duplicate row vs. multi-segment document vs. shared namespace) **before** recommending a key.
   Built on **DuckDB**, not the polars/pyarrow harness: the exact-duplicate test needs a
@@ -103,7 +103,7 @@ emit Markdown; neither has runtime dependencies on the other:
   `read_row_group` OOM-kills the box (see below). Regenerate with:
 
   ```bash
-  uv run python -m open_us_law_coverage.identity_collisions data/v2026.08_full/*.parquet \
+  uv run python -m open_us_law_citation.identity_collisions data/v2026.08_full/*.parquet \
       --snapshot v2026.08 --out reports/M0.5A_identity_collisions.md \
       --memory-limit 4GB --temp-dir /path/to/scratch/ddspill
   ```
@@ -111,7 +111,7 @@ emit Markdown; neither has runtime dependencies on the other:
   Examples use `min(act_id)` (not `any_value`) so the report is byte-stable across reruns. The
   recommended `SourceIdentityStrategy` prose lives in `STRATEGY_SECTION` in the module (embedded, not
   hand-edited into the report) so the report regenerates verbatim.
-- `src/open_us_law_coverage/segment_provenance.py` → `reports/M0.5A1_segment_provenance.md` (M0.5A.1).
+- `src/open_us_law_citation/segment_provenance.py` → `reports/M0.5A1_segment_provenance.md` (M0.5A.1).
   The collision-provenance + segment-order spike. Also DuckDB-based, and it adds `file_row_number=true`
   to `read_parquet` to recover a stable within-file **physical row ordinal** without materializing a
   row-group. Two load-bearing results it established (design against these): (1) the v2026.07↔v2026.08
@@ -128,11 +128,11 @@ emit Markdown; neither has runtime dependencies on the other:
   from the computed tables). Regenerate with:
 
   ```bash
-  uv run python -m open_us_law_coverage.segment_provenance data/v2026.08_full/*_regulations.parquet \
+  uv run python -m open_us_law_citation.segment_provenance data/v2026.08_full/*_regulations.parquet \
       --snapshot v2026.08 --out reports/M0.5A1_segment_provenance.md \
       --memory-limit 4GB --temp-dir /path/to/scratch/ddspill
   ```
-- `src/open_us_law_coverage/source_record.py` → `tests/test_source_record.py` (M1A). The immutable,
+- `src/open_us_law_citation/source_record.py` → `tests/test_source_record.py` (M1A). The immutable,
   lossless `CanonicalSourceRecord` core — **not** a report harness; its deliverable is the model +
   the golden-fixture acceptance suite. `CanonicalSourceRecord` is a `@dataclass(frozen=True)` whose
   `__post_init__` (M1A.5 review P2) defensively copies `original_columns` into a `MappingProxyType`,
@@ -153,9 +153,9 @@ emit Markdown; neither has runtime dependencies on the other:
   hermetic — `tests/conftest.py` synthesizes a multi-row-group Parquet (unicode, null text, null
   metadata, empty string, byte-identical twins); `test_real_sample_roundtrip` additionally checks the
   committed `data/v2026.08/us_ak_constitutions.parquet` when present (skips otherwise). A cheap
-  no-`text`-scan snapshot manifest: `uv run python -m open_us_law_coverage.source_record
+  no-`text`-scan snapshot manifest: `uv run python -m open_us_law_citation.source_record
   data/v2026.08/*.parquet --snapshot v2026.08`.
-- `src/open_us_law_coverage/derived/` (M1A.5) — the shared derived-artifact foundation, on the
+- `src/open_us_law_citation/derived/` (M1A.5) — the shared derived-artifact foundation, on the
   *interpretation* side of the versioned boundary (so rebuilding any of it has **zero** effect on
   `source_record_id`/`raw_text_hash`). Not a report harness; its deliverable is the contracts + the
   golden-fixture suites (`tests/test_derived_provenance.py`, `test_classification.py`,
@@ -226,7 +226,7 @@ emit Markdown; neither has runtime dependencies on the other:
   group is rejected, never mislabeled from the first member). Only the CFR multi-row *composer*
   (`cfr_source_assembly_v1`) is still deferred (CFR-A2). Duck-typed on `.source_record_id`/`.column('act_id')`,
   so `derived/` has **no runtime import** of the immutable core.
-- `src/open_us_law_coverage/identity_manifest.py` → `reports/M1A5_identity_manifest.md` (M1A.5 C.3). The
+- `src/open_us_law_citation/identity_manifest.py` → `reports/M1A5_identity_manifest.md` (M1A.5 C.3). The
   deterministic full-snapshot identity manifest — scale evidence + next-snapshot regression fixture. **DuckDB**,
   not pyarrow (the OOM invariant below): `COUNT(*) GROUP BY act_id` sizes every file;
   `'sha256:' || sha256(text)` + `SEMI JOIN` streams out only the colliding rows (spilling under
@@ -241,7 +241,7 @@ emit Markdown; neither has runtime dependencies on the other:
   split reports `resolved`/`provisional`/`ambiguous` **separately**. It measured that `act_id` collisions are a
   **regulations** phenomenon and **not federal-only** (state administrative codes collide — the reason
   `state_regulation_v1` exists). Byte-stable; regenerate with `--memory-limit 4GB --temp-dir <scratch>`.
-- `src/open_us_law_coverage/hierarchy.py` → `reports/M0.5B2_hierarchy.md` + `tests/test_hierarchy.py`
+- `src/open_us_law_citation/hierarchy.py` → `reports/M0.5B2_hierarchy.md` + `tests/test_hierarchy.py`
   (M0.5B2). Both a tested parser and a report harness. `parse_breadcrumb(breadcrumb_json)` is the pure
   core — it turns the `breadcrumb` JSON array (`{type,num,label,name}`, root→leaf) into a normalized
   `HierarchyNode(kind, identifier, label, source, confidence, ordinal, raw_kind, name)` path; **flat
@@ -258,9 +258,9 @@ emit Markdown; neither has runtime dependencies on the other:
   holds the qualitative verdict (embedded so it never drifts from the tables). Also defines
   `StructuralPath` (the durable absolute anchor — `to_structural_path(nodes)`, key = `(kind,
   identifier-or-label)` per step) that LOCAL/RELATIVE/CONTAINER resolution operates on. Regenerate:
-  `uv run python -m open_us_law_coverage.hierarchy data/v2026.08_full/us_{ca,tx}_statutes.parquet
+  `uv run python -m open_us_law_citation.hierarchy data/v2026.08_full/us_{ca,tx}_statutes.parquet
   data/v2026.08_full/us_{oh,de}_regulations.parquet --snapshot v2026.08 --out reports/M0.5B2_hierarchy.md`.
-- `src/open_us_law_coverage/ca_probe.py` → `reports/M0.5B3_ca_abstraction.md` + `tests/test_ca_probe.py`
+- `src/open_us_law_citation/ca_probe.py` → `reports/M0.5B3_ca_abstraction.md` + `tests/test_ca_probe.py`
   (M0.5B3). The CA abstraction-falsification probe — **not** "run USC rules on CA"; it runs every
   *built* artifact type (M1A.5 annotations/assembly, `HierarchyNode[]`/`StructuralPath`) over the full
   CA statutes corpus (`iter_source_records`, row-group-bounded) and reports the interface changes CA
@@ -273,7 +273,7 @@ emit Markdown; neither has runtime dependencies on the other:
   conclusion scoped to the identity group, never a `legal_id` merge. Anatomy (`AnatomySpan`) is not
   built (B1/USLM), so the probe records CA's anatomy requirements (leading history/source-credit
   bracket; `act_status` unreliable) and defers full anatomy falsification to B1. Byte-stable.
-  Regenerate: `uv run python -m open_us_law_coverage.ca_probe data/v2026.08_full/us_ca_statutes.parquet
+  Regenerate: `uv run python -m open_us_law_citation.ca_probe data/v2026.08_full/us_ca_statutes.parquet
   --snapshot v2026.08 --out reports/M0.5B3_ca_abstraction.md`.
 
 ### Load-bearing design invariants (span the whole system — do not violate)

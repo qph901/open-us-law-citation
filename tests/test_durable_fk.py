@@ -27,7 +27,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from open_us_law_coverage.derived import (
+from open_us_law_citation.derived import (
     ArtifactInput,
     ArtifactType,
     AssemblyStatus,
@@ -52,12 +52,12 @@ from open_us_law_coverage.derived import (
     resolve_single_record_identity,
     source_record_inputs,
 )
-from open_us_law_coverage.derived.assembly import (
+from open_us_law_citation.derived.assembly import (
     TRIVIAL_PRODUCER_NAME,
     assemble_trivial_single_record,
     compute_assembled_text_hash,
 )
-from open_us_law_coverage.source_record import read_source_records
+from open_us_law_citation.source_record import read_source_records
 from tests.conftest import SNAPSHOT
 
 _CFR_ACT_ID = "CFR_T17_P240_S240.10b-5"

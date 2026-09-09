@@ -10,7 +10,7 @@ from typing import Sequence
 
 def package_version() -> str:
     try:
-        return version("open-us-law-coverage")
+        return version("open-us-law-citation")
     except PackageNotFoundError:
         return "0+unknown"
 
@@ -44,8 +44,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     parser = argparse.ArgumentParser(
-        prog="open-us-law-coverage",
-        description="Reproducible Open US Law coverage and identity audits.",
+        prog="open-us-law-citation",
+        description="Open US Law Citation: reproducible citation, coverage, and identity audits.",
     )
     parser.add_argument("--version", action="version", version=package_version())
     parser.add_argument(

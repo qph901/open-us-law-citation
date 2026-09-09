@@ -59,7 +59,7 @@ from .provenance import (
 )
 
 if TYPE_CHECKING:
-    from open_us_law_coverage.source_record import CanonicalSourceRecord
+    from open_us_law_citation.source_record import CanonicalSourceRecord
 
 
 USC_ACT_ID_V1 = "usc_act_id_v1"

@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from open_us_law_coverage.hierarchy import (
+from open_us_law_citation.hierarchy import (
     HierarchyKind,
     HierarchySource,
     RoundTrip,

@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from open_us_law_coverage.derived import AuthorityRole, DocumentClass, InputType
-from open_us_law_coverage.derived.classification import (
+from open_us_law_citation.derived import AuthorityRole, DocumentClass, InputType
+from open_us_law_citation.derived.classification import (
     classify,
     classify_source_record,
     fr_default_off,
 )
-from open_us_law_coverage.source_record import read_source_records
+from open_us_law_citation.source_record import read_source_records
 from tests.conftest import SNAPSHOT
 
 
@@ -165,7 +165,7 @@ def test_prefix_evidence_is_truthful():
 
 
 def _assert_no_high_confidence_contradiction(document_type, act_id):
-    from open_us_law_coverage.derived.classification import (
+    from open_us_law_citation.derived.classification import (
         _PREFIX_EXPECTED_CLASS,
         act_id_prefix,
     )

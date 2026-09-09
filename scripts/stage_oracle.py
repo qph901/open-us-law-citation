@@ -9,7 +9,7 @@ discipline as :mod:`scripts.download`: it writes ``local_path``/``sha256`` back 
 the registry **only** after every expected byte is present and parseable.
 
 Two edition kinds, matching the two hashing methods in
-:func:`open_us_law_coverage.coverage_baseline.oracle_source_sha256`:
+:func:`open_us_law_citation.coverage_baseline.oracle_source_sha256`:
 
 * **USLM** (USC): a single official artifact (the release-point ``.zip`` of per-title
   USLM XML, or one XML file) → ``sha256_bytes_v1``. The registry ``source_url`` is the
@@ -44,14 +44,14 @@ from pathlib import Path
 from typing import Callable
 from xml.etree import ElementTree as ET
 
-from open_us_law_coverage.coverage_baseline import oracle_source_sha256
-from open_us_law_coverage.oracle_manifest import OracleKind, load_oracle_manifest
+from open_us_law_citation.coverage_baseline import oracle_source_sha256
+from open_us_law_citation.oracle_manifest import OracleKind, load_oracle_manifest
 
 # A fetcher maps an https URL to its raw response bytes. The default hits the
 # network; tests inject a fake so no official download is required.
 Fetcher = Callable[[str], bytes]
 
-_USER_AGENT = "open-us-law-coverage/COV-1A oracle-stager"
+_USER_AGENT = "open-us-law-citation/COV-1A oracle-stager"
 
 
 def http_fetch(url: str, *, timeout: float = 120.0) -> bytes:

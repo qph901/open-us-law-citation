@@ -15,7 +15,7 @@ import dataclasses
 
 import pytest
 
-from open_us_law_coverage.derived import (
+from open_us_law_citation.derived import (
     ArtifactInput,
     ArtifactType,
     DerivedArtifactProvenance,
@@ -168,7 +168,7 @@ def test_empty_input_id_rejected():
 
 
 def test_evidence_confidence_range_enforced():
-    from open_us_law_coverage.derived import Evidence
+    from open_us_law_citation.derived import Evidence
 
     Evidence("k", "d")  # None is fine
     Evidence("k", "d", confidence=0.0)
@@ -185,7 +185,7 @@ def test_evidence_confidence_range_enforced():
 def test_payload_hash_is_order_and_type_stable():
     """Equal semantic bodies hash equally; tuples/lists and enum members serialize
     to the same canonical bytes."""
-    from open_us_law_coverage.derived import Evidence, compute_payload_hash
+    from open_us_law_citation.derived import Evidence, compute_payload_hash
 
     a = compute_payload_hash(
         ArtifactType.QUALITY_ANNOTATION,
@@ -199,7 +199,7 @@ def test_payload_hash_is_order_and_type_stable():
 
 
 def test_payload_hash_distinguishes_body_and_type():
-    from open_us_law_coverage.derived import compute_payload_hash
+    from open_us_law_citation.derived import compute_payload_hash
 
     base = {"document_class": "statute", "confidence": 1.0}
     changed = {"document_class": "regulation", "confidence": 1.0}
@@ -213,7 +213,7 @@ def test_payload_hash_distinguishes_body_and_type():
 
 
 def test_non_serializable_payload_field_raises():
-    from open_us_law_coverage.derived import compute_payload_hash
+    from open_us_law_citation.derived import compute_payload_hash
 
     with pytest.raises(TypeError):
         compute_payload_hash(ArtifactType.QUALITY_ANNOTATION, {"x": object()})
@@ -221,7 +221,7 @@ def test_non_serializable_payload_field_raises():
 
 def _classification(document_class, *, rid="r1"):
     """A minimal directly-constructed classification annotation for tripwire tests."""
-    from open_us_law_coverage.derived import (
+    from open_us_law_citation.derived import (
         AuthorityRole,
         DocumentClassificationAnnotation,
     )
@@ -242,7 +242,7 @@ def _classification(document_class, *, rid="r1"):
 
 def test_payload_hash_assigned_and_validated_on_construction():
     """A directly-built artifact fills its payload_hash; a hand-set wrong one raises."""
-    from open_us_law_coverage.derived import (
+    from open_us_law_citation.derived import (
         AuthorityRole,
         DocumentClass,
         DocumentClassificationAnnotation,
@@ -264,7 +264,7 @@ def test_payload_hash_assigned_and_validated_on_construction():
 def test_equal_id_unequal_payload_tripwire_fires():
     """M1A.5 D2: two artifacts with the same artifact_id but different bodies — the
     unbumped-producer-change signature — must raise, not silently overwrite."""
-    from open_us_law_coverage.derived import (
+    from open_us_law_citation.derived import (
         DocumentClass,
         PayloadCollisionError,
         check_payload_collisions,

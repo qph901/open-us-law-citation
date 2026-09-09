@@ -1,7 +1,7 @@
 [project]
-name = "open-us-law-coverage"
+name = "open-us-law-citation"
 version = "0.1.0"
-description = "Evidence-first citation, identity, and coverage research over Open US Law"
+description = "Open US Law Citation: reliable legal references with versioned source evidence"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -17,7 +17,10 @@ dependencies = [
 ]
 
 [project.scripts]
-open-us-law-coverage = "open_us_law_coverage:main"
+open-us-law-citation = "open_us_law_citation:main"
+# Compatibility alias: the project was renamed from "open-us-law-coverage", and the old
+# command still works so existing scripts do not break.
+open-us-law-coverage = "open_us_law_citation:main"
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
@@ -51,7 +54,7 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 
 [tool.coverage.run]
-source = ["open_us_law_coverage"]
+source = ["open_us_law_citation"]
 branch = true
 
 [tool.coverage.report]

@@ -17,7 +17,7 @@ number existed as an act_id in the older snapshot — i.e. whether a move really
 does change the id, as the identity model assumes.
 
 Usage:
-    uv run python -m open_us_law_coverage.snapshot_diff \
+    uv run python -m open_us_law_citation.snapshot_diff \
         --old data/v2026.07/us_federal_statutes.parquet \
         --new data/v2026.08/us_federal_statutes.parquet \
         --old-label v2026.07 --new-label v2026.08 \

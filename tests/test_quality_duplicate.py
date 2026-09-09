@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from open_us_law_coverage.derived import (
+from open_us_law_citation.derived import (
     ArtifactType,
     DerivedArtifactProvenance,
     IdentityMember,
@@ -23,7 +23,7 @@ from open_us_law_coverage.derived import (
     is_duplicate_row,
     source_record_inputs,
 )
-from open_us_law_coverage.source_record import read_source_records
+from open_us_law_citation.source_record import read_source_records
 from tests.conftest import SNAPSHOT
 
 

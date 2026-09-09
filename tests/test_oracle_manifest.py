@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from open_us_law_coverage.derived import InputType
-from open_us_law_coverage.oracle_manifest import CutoffStatus, load_oracle_manifest
+from open_us_law_citation.derived import InputType
+from open_us_law_citation.oracle_manifest import CutoffStatus, load_oracle_manifest
 
 MANIFEST = Path("oracles/v2026.08.json")
 

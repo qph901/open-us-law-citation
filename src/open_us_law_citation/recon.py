@@ -14,7 +14,7 @@ The cross-snapshot questions (act_id stability under text-only amendment) cannot
 be answered from a single snapshot and are reported as such.
 
 Usage:
-    uv run python -m open_us_law_coverage.recon data/v2026.08/*.parquet \
+    uv run python -m open_us_law_citation.recon data/v2026.08/*.parquet \
         --snapshot v2026.08 --out reports/M0_recon.md
 """
 

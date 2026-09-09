@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from open_us_law_coverage.derived import (
+from open_us_law_citation.derived import (
     ArtifactInput,
     ArtifactType,
     DerivedArtifactProvenance,

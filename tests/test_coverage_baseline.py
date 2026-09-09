@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from open_us_law_coverage.coverage_baseline import (
+from open_us_law_citation.coverage_baseline import (
     CurrencyStatus,
     DatasetCandidate,
     DatasetEvidence,
@@ -27,10 +27,10 @@ from open_us_law_coverage.coverage_baseline import (
     render_official_inventory,
     text_fingerprints,
 )
-from open_us_law_coverage.coverage_baseline import (
+from open_us_law_citation.coverage_baseline import (
     main as coverage_main,
 )
-from open_us_law_coverage.oracle_manifest import CutoffStatus, OracleKind
+from open_us_law_citation.oracle_manifest import CutoffStatus, OracleKind
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64

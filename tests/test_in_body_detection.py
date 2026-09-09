@@ -11,7 +11,7 @@ from __future__ import annotations
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from open_us_law_coverage.in_body_detection import (
+from open_us_law_citation.in_body_detection import (
     _parse_xref_cfr,
     _parse_xref_usc,
     render_report,

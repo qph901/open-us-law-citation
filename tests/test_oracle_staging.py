@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import scripts.stage_oracle as st
-from open_us_law_coverage.oracle_manifest import load_oracle_manifest
+from open_us_law_citation.oracle_manifest import load_oracle_manifest
 
 _USLM_ID = "oracle:uslm:test:2025-01-06"
 _ECFR_ID = "oracle:ecfr:test:2026-08-26"

@@ -1,4 +1,8 @@
-# Project priorities
+# Open US Law Citation — project priorities
+
+The product goal is reliable legal citation: the correct provision, faithful text
+from a specified version, auditable source evidence, and explicit uncertainty.
+Law coverage measures how broadly the system can deliver that result.
 
 These priorities govern roadmap and optimization decisions. A lower priority must
 not be improved by making a higher priority materially worse.

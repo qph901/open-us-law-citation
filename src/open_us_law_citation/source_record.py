@@ -29,7 +29,7 @@ downstream and anchors its durable references to ``source_record_id``.
 
 Usage (manifest of a snapshot; cheap, no ``text`` scan)::
 
-    uv run python -m open_us_law_coverage.source_record data/v2026.08/*.parquet \\
+    uv run python -m open_us_law_citation.source_record data/v2026.08/*.parquet \\
         --snapshot v2026.08
 
 Non-obvious constraint carried from ``recon.py`` / ``CLAUDE.md``: the federal

@@ -12,7 +12,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from open_us_law_coverage.citation_parser import (
+from open_us_law_citation.citation_parser import (
     DETECTION_GOLD,
     _DETECTION_MIN_PRECISION,
     _DETECTION_MIN_RECALL,
@@ -28,8 +28,8 @@ from open_us_law_coverage.citation_parser import (
     render_detection_report,
     render_report,
 )
-from open_us_law_coverage.coverage_baseline import FederalCorpus
-from open_us_law_coverage.derived import ArtifactType, check_payload_collisions
+from open_us_law_citation.coverage_baseline import FederalCorpus
+from open_us_law_citation.derived import ArtifactType, check_payload_collisions
 
 
 # --- USC grammar ----------------------------------------------------------------

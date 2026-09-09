@@ -39,7 +39,7 @@ never pyarrow ``read_row_group``:
 
 Regenerate (byte-stable)::
 
-    uv run python -m open_us_law_coverage.identity_manifest \\
+    uv run python -m open_us_law_citation.identity_manifest \\
         data/v2026.08_full/*.parquet --snapshot v2026.08 \\
         --out reports/M1A5_identity_manifest.md \\
         --memory-limit 4GB --temp-dir /path/to/scratch/ddspill

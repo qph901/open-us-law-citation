@@ -11,7 +11,7 @@ staged and checksum-pinned.
 
 ## Implemented first slice
 
-[`coverage_baseline.py`](../src/open_us_law_coverage/coverage_baseline.py) now
+[`coverage_baseline.py`](../src/open_us_law_citation/coverage_baseline.py) now
 provides:
 
 - a canonical federal provision key: `(US, corpus, title, section)`;
@@ -80,7 +80,7 @@ inventory and are never included in the codified-CFR denominator.
    overrides.
 
 ```bash
-uv run open-us-law-coverage coverage-baseline build-inventory \
+uv run open-us-law-citation coverage-baseline build-inventory \
   --corpus usc \
   --oracle-manifest oracles/v2026.08.json \
   --currency-basis "OLRC release point through Public Law 118-274, except 118-159" \
@@ -90,7 +90,7 @@ uv run open-us-law-coverage coverage-baseline build-inventory \
 4. Compare the checksum-pinned dataset file and emit both artifacts.
 
 ```bash
-uv run open-us-law-coverage coverage-baseline compare \
+uv run open-us-law-citation coverage-baseline compare \
   --official-inventory data/oracles/usc-v2026.08-inventory.json \
   --oracle-manifest oracles/v2026.08.json \
   --dataset data/v2026.08_full/us_federal_statutes.parquet \

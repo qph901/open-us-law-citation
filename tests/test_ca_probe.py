@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from open_us_law_coverage.ca_probe import analyze_ca
+from open_us_law_citation.ca_probe import analyze_ca
 from tests.conftest import SNAPSHOT
 
 _REAL_CA = Path("data/v2026.08/us_ca_statutes.parquet")
@@ -22,8 +22,8 @@ def test_snapshot_propagates_into_the_provenance_chain(statutes_fixture_parquet:
     every derived artifact id), not just the report header. Two runs under different
     snapshot labels over the same file must produce different source_record ids —
     proving the snapshot is threaded through ``iter_source_records``, not hardcoded."""
-    from open_us_law_coverage.derived import resolve_single_record_identity
-    from open_us_law_coverage.source_record import read_source_records
+    from open_us_law_citation.derived import resolve_single_record_identity
+    from open_us_law_citation.source_record import read_source_records
 
     a = read_source_records(statutes_fixture_parquet, "v2026.08")[0]
     b = read_source_records(statutes_fixture_parquet, "v2099.99")[0]

@@ -23,7 +23,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from open_us_law_coverage.source_record import EXPECTED_COLUMNS, TEXT_COLUMN
+from open_us_law_citation.source_record import EXPECTED_COLUMNS, TEXT_COLUMN
 
 SNAPSHOT = "v2026.08"
 

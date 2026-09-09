@@ -14,7 +14,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from open_us_law_coverage.identity_manifest import (
+from open_us_law_citation.identity_manifest import (
     CollisionDeepDive,
     _connect,
     add_collision_file,
@@ -22,7 +22,7 @@ from open_us_law_coverage.identity_manifest import (
     render_report,
     scan_group_sizes,
 )
-from open_us_law_coverage.source_record import EXPECTED_COLUMNS
+from open_us_law_citation.source_record import EXPECTED_COLUMNS
 
 
 @pytest.fixture()
@@ -89,13 +89,13 @@ def test_manifest_hash_matches_canonical_pipeline_and_no_tripwire(
     collision tripwire stays silent across the two paths (a bare md5 made it fire)."""
     from collections import defaultdict
 
-    from open_us_law_coverage.derived import (
+    from open_us_law_citation.derived import (
         check_payload_collisions,
         identity_member,
         regulations_identity_group,
     )
-    from open_us_law_coverage.identity_manifest import _colliding_members
-    from open_us_law_coverage.source_record import read_source_records
+    from open_us_law_citation.identity_manifest import _colliding_members
+    from open_us_law_citation.source_record import read_source_records
 
     manifest_buckets = _colliding_members(con, regs_parquet, "v2026.08")
     assert manifest_buckets  # the fixture has colliding groups

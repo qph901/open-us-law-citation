@@ -21,6 +21,6 @@ jobs:
       - run: uv sync --locked --all-groups
       - run: uv run ruff check src tests scripts
       - run: uv run mypy src
-      - run: uv run pytest --cov=open_us_law_coverage --cov-report=term-missing
+      - run: uv run pytest --cov=open_us_law_citation --cov-report=term-missing
       - run: uv build
       - run: git diff --check

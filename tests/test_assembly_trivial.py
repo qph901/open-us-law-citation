@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from open_us_law_coverage.derived import (
+from open_us_law_citation.derived import (
     ArtifactType,
     AssemblyStatus,
     AssemblyStrategy,
@@ -23,11 +23,11 @@ from open_us_law_coverage.derived import (
     associate_assembly_with_identity,
     source_record_inputs,
 )
-from open_us_law_coverage.derived.assembly import (
+from open_us_law_citation.derived.assembly import (
     assemble_trivial_single_record,
     compute_assembled_text_hash,
 )
-from open_us_law_coverage.source_record import read_source_records
+from open_us_law_citation.source_record import read_source_records
 from tests.conftest import SNAPSHOT
 
 
@@ -111,7 +111,7 @@ def test_identity_association_is_a_governed_derived_artifact(fixture_parquet: Pa
     collision tripwire covers it. Two keys over one assembly get distinct
     ``artifact_id``s (the key is folded into ``config_hash``, never a provenance edge),
     so they coexist without a payload collision."""
-    from open_us_law_coverage.derived import (
+    from open_us_law_citation.derived import (
         ArtifactType,
         InputType,
         check_payload_collisions,
@@ -145,8 +145,8 @@ def test_corrected_producer_is_v2_and_cannot_share_v1_artifact_id(fixture_parque
     *genuine* legacy shape difference: a hand-built v1-labeled legacy fixture vs. the
     real v2 producer output over the same record — a different artifact id, and no
     payload collision (distinct ids, so the tripwire has nothing to fire on)."""
-    from open_us_law_coverage.derived import check_payload_collisions
-    from open_us_law_coverage.derived.assembly import (
+    from open_us_law_citation.derived import check_payload_collisions
+    from open_us_law_citation.derived.assembly import (
         TRIVIAL_PRODUCER_NAME,
         TRIVIAL_PRODUCER_VERSION,
     )

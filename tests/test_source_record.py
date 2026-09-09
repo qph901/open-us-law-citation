@@ -29,7 +29,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
-from open_us_law_coverage.source_record import (
+from open_us_law_citation.source_record import (
     EXPECTED_COLUMNS,
     METADATA_COLUMNS,
     CanonicalSourceRecord,
@@ -377,7 +377,7 @@ def test_arrow_type_validation_rejects_wrong_column_type(tmp_path: Path):
     import pyarrow as pa
     import pyarrow.parquet as pq_
 
-    from open_us_law_coverage.source_record import SchemaMismatchError
+    from open_us_law_citation.source_record import SchemaMismatchError
 
     # word_count should be integer; make it a string to force a type mismatch.
     fields = []

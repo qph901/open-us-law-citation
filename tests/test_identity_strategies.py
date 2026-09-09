@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from open_us_law_coverage.derived import (
+from open_us_law_citation.derived import (
     IdentityMember,
     IdentityScope,
     IdentityStatus,
@@ -27,11 +27,11 @@ from open_us_law_coverage.derived import (
     regulations_identity_group,
     resolve_single_record_identity,
 )
-from open_us_law_coverage.derived.assembly import (
+from open_us_law_citation.derived.assembly import (
     AssemblyStatus,
     assemble_trivial_single_record,
 )
-from open_us_law_coverage.derived.identity_strategies import (
+from open_us_law_citation.derived.identity_strategies import (
     CFR_IDENTITY_V1,
     CONSTITUTION_ACT_ID_V1,
     FEDERAL_REGISTER_DOCUMENT_V1,

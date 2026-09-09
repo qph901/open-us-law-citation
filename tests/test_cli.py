@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from open_us_law_coverage.cli import main, package_version
+from open_us_law_citation.cli import main, package_version
 
 
 def test_cli_without_a_subcommand_prints_useful_help(capsys):
