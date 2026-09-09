@@ -61,7 +61,15 @@ from .coverage_baseline import FederalCorpus
 # Python regex runs — and that skipped population is precisely the bare/relative references
 # the explicit detector abstains on. DuckDB's ``regexp_matches`` is RE2, so this is the same
 # dialect the pyarrow ``match_substring_regex`` pre-filter used.
-_CANDIDATE_RE = r"U\.?\s?S\.?\s?C|C\.?\s?F\.?\s?R|United States Code|Code of Federal Regulations"
+# MUST be a genuine superset of every form `detect_mentions` accepts. The spelled-out code
+# names use `\s+` here, not literal spaces: the detector matches them with `\s+`, so a
+# citation wrapped across a line ("...of title 42, United\nStates Code") passed the detector
+# but was filtered out before ever reaching it — silently, and while the report asserted
+# that filtered bodies cannot contain an explicit citation.
+_CANDIDATE_RE = (
+    r"U\.?\s?S\.?\s?C|C\.?\s?F\.?\s?R"
+    r"|United\s+States\s+Code|Code\s+of\s+Federal\s+Regulations"
+)
 
 _Cite = tuple[str, str]  # (title, section)
 
@@ -81,13 +89,15 @@ def _coerce_xref(item: object, row_title: int | None) -> _Cite | None:
         if not item:
             return None
         if ":" in item:
-            title, section = item.split(":", 1)
-            return (title.strip(), section.strip())
+            title_part, section_part = item.split(":", 1)
+            return (title_part.strip(), section_part.strip())
         return (str(row_title), item) if row_title is not None else None
     if isinstance(item, dict):
-        title, section = item.get("title"), item.get("section")
-        if title is not None and section is not None:
-            return (str(title).strip(), str(section).strip())
+        # Distinct names from the str branch above: reusing them makes the declared type
+        # `str` and the dict values `Any | None`, which mypy rejects (a required CI step).
+        dict_title, dict_section = item.get("title"), item.get("section")
+        if dict_title is not None and dict_section is not None:
+            return (str(dict_title).strip(), str(dict_section).strip())
         return None  # part-only or malformed: not a section-level edge
     return None
 

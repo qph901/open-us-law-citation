@@ -48,7 +48,7 @@ import argparse
 import glob as globlib
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Iterator, Sequence
@@ -151,7 +151,22 @@ _YEAR = r"(?:\s*\((?:19|20)\d{2}\))?"
 # optional underscore-number tail (222e_2). No dots. A USC subsection (``(a)(2)``) is a
 # *separate* pointer — the dataset's section_number is the bare number — so USC keeps the
 # ``_USC_SUBSEC`` group and strips it out of ``parsed_section``.
-_USC_SECTION = r"(?P<section>\d+[A-Za-z]*(?:_\d+)?)"
+# A USC section token, and it must be matched WHOLE. Two shapes carry a separator:
+#   * a letter-suffixed section with a numeric tail -- 2000e-2, 1395w-4, 1135d-5, 73b-2.
+#     Sampled from real statute bodies, every hyphenated USC id has a LETTER before the
+#     hyphen; a pure digit-hyphen-digit token never appeared and is a RANGE (1983-1985).
+#   * the dataset's own underscore rendering -- 4128_2 (8 sections at v2026.08).
+# `_TOKEN_END` is the completeness guard, and it is load-bearing in two ways: without it
+# `42 U.S.C. § 2000e-2(a)` matched the prefix and emitted section 2000e -- a DIFFERENT
+# provision, at confidence 1.0, silently -- and a list tail could backtrack into a proper
+# prefix of the next citation's title (see _USC_LIST_TAIL). A token this cannot match
+# whole (a range like 668dd-668ee) yields no match at all, which is the correct abstention.
+# digits, optional letters, an optional hyphen-tail ONLY after letters (so a pure
+# digit-hyphen-digit token stays a range and abstains), and the dataset's underscore tail,
+# which is never a range separator and so may always follow (222e_2, 4128_2).
+_USC_SECTION_TOKEN = r"\d+(?:[A-Za-z]+(?:-\d+)?)?(?:_\d+)?"
+_TOKEN_END = r"(?![0-9A-Za-z_-])"
+_USC_SECTION = rf"(?P<section>{_USC_SECTION_TOKEN}){_TOKEN_END}"
 # CFR section (cfr_grammar_v3): part.rest, where the ENTIRE token is the section identity.
 # Unlike USC, the dataset stores parenthesised/temporary material *inside* section_number
 # (26 CFR § 41.6151(a)-1, 17 CFR § 240.11a1-4(T)), so it captures embedded ``(...)`` and a
@@ -160,10 +175,26 @@ _USC_SECTION = r"(?P<section>\d+[A-Za-z]*(?:_\d+)?)"
 # alphanumeric or ``)`` so sentence punctuation in free text is not swallowed. A ``(YYYY)``
 # edition marker is always space-separated, so it is never captured here.
 _USC_SUBSEC = r"(?P<subsection>(?:\([0-9A-Za-z]{1,4}\))+)?"
-_CFR_SECTION = (
-    r"(?P<section>(?P<part>\d+[A-Za-z]?(?:-\d+[A-Za-z]?)*)"
-    r"\.[0-9A-Za-z](?:[0-9A-Za-z().\-]*[0-9A-Za-z)])?)"
+# A parenthesised group belongs to the SECTION IDENTITY only when the run of groups is
+# followed by more identifier material (41.6151(a)-1, 275.202(a)(11)(G)-1); a run that ends
+# the token is an ordinary paragraph pointer and splits into `parsed_subsection`. Measured
+# over all 168,488 distinct CFR section numbers at v2026.08: 1,455 have interior parens,
+# and only 8 trail — 4 are the temporary-regulation marker `(T)`, kept explicitly here, 3
+# are space-separated `(Rule N)` (the space already excludes them), and 1 (`312.202(d)`) is
+# an anomaly this deliberately reads as a subsection, since doing otherwise would fold an
+# ordinary pointer into the identity on every `330.601(a)(1)` in prose.
+#
+# Parens are matched as balanced groups, never from a character class: the old class
+# accepted a lone `)`, so `See (17 CFR 240.10b-5).` produced section `240.10b-5)`.
+_CFR_PAREN_GROUP = r"\([0-9A-Za-z.\-]+\)"
+_CFR_SECTION_TOKEN = (
+    r"(?P<part>\d+[A-Za-z]?(?:-\d+[A-Za-z]?)*)"
+    rf"\.[0-9A-Za-z](?:(?:[0-9A-Za-z.\-]|(?:{_CFR_PAREN_GROUP})+"
+    rf"(?=[0-9A-Za-z.\-]))*[0-9A-Za-z])?"
+    r"(?:\(T\))?"
 )
+_CFR_SUBSEC = rf"(?P<subsection>(?:{_CFR_PAREN_GROUP})+)?"
+_CFR_SECTION = rf"(?P<section>{_CFR_SECTION_TOKEN}){_CFR_SUBSEC}"
 
 _USC_ABSOLUTE = re.compile(
     rf"(?P<title>\d+)\s+{_USC_CODE}\s*(?:{_SECTION_SIGN}\s*)?{_USC_SECTION}{_USC_SUBSEC}{_YEAR}",
@@ -347,7 +378,12 @@ _PRODUCER_VERSION = "1"
 
 
 def _mention_config_hash(
-    parsed: ParsedCitation, start_char: int, end_char: int, raw_reference_text: str
+    parsed: ParsedCitation,
+    start_char: int,
+    end_char: int,
+    raw_reference_text: str,
+    structural_path: str | None,
+    source_legal_id: str | None,
 ) -> str:
     """Distinguish co-located mentions within one derivation address.
 
@@ -356,6 +392,13 @@ def _mention_config_hash(
     would otherwise collide. Folding the occurrence's span + parsed identity into
     ``config_hash`` gives each distinct mention a distinct id while a re-derivation of the
     *same* occurrence stays stable.
+
+    ``structural_path`` and ``source_legal_id`` are folded in for the same reason: both are
+    supported producer arguments that land in the semantic payload, so leaving them out
+    made two mentions differing only in hierarchy anchoring share one derivation address
+    with different ``payload_hash`` values — which is exactly what ``check_payload_collisions``
+    exists to flag, and it fired. They stay in ``config_hash`` rather than becoming
+    provenance edges: the durable-FK rule anchors edges to ``source_record_id`` alone.
     """
     key = "\x1f".join(
         str(x)
@@ -369,6 +412,8 @@ def _mention_config_hash(
             parsed.parsed_subsection,
             parsed.reference_type,
             raw_reference_text,
+            structural_path,
+            source_legal_id,
         )
     )
     return "cfg:sha256:" + hashlib.sha256(key.encode("utf-8")).hexdigest()
@@ -394,7 +439,10 @@ def build_reference_mention(
         inputs,
         producer_name=parsed.parser_method,
         producer_version=_PRODUCER_VERSION,
-        config_hash=_mention_config_hash(parsed, start_char, end_char, raw_reference_text),
+        config_hash=_mention_config_hash(
+            parsed, start_char, end_char, raw_reference_text,
+            structural_path, source_legal_id,
+        ),
         generated_at=generated_at,
     )
     return ReferenceMention(
@@ -439,15 +487,27 @@ _DETECT_CFR_QUALIFIED = re.compile(
 _PLURAL_SIGN_RE = re.compile(r"§§|[Ss]ections\b|[Ss]ecs\b")
 _LIST_SEP = r"(?:\s*,\s*(?:and\s+)?|\s+and\s+)"
 _NOT_A_NEW_CITATION = r"(?!\s*(?:U\.?\s?S\.?\s?C|C\.?\s?F\.?\s?R))"
-_USC_SECTION_BARE = r"\d+[A-Za-z]*(?:_\d+)?(?:\([0-9A-Za-z]{1,4}\))*"
-_CFR_SECTION_BARE = r"\d+[A-Za-z]?(?:-\d+[A-Za-z]?)*\.[0-9A-Za-z](?:[0-9A-Za-z().\-]*[0-9A-Za-z)])?"
-_USC_LIST_TAIL = re.compile(rf"{_LIST_SEP}(?P<section>{_USC_SECTION_BARE}){_NOT_A_NEW_CITATION}")
+_USC_SECTION_BARE = rf"{_USC_SECTION_TOKEN}(?:\([0-9A-Za-z]{{1,4}}\))*"
+_CFR_SECTION_BARE = (
+    r"\d+[A-Za-z]?(?:-\d+[A-Za-z]?)*"
+    rf"\.[0-9A-Za-z](?:(?:[0-9A-Za-z.\-]|(?:{_CFR_PAREN_GROUP})+"
+    rf"(?=[0-9A-Za-z.\-]))*[0-9A-Za-z])?"
+    r"(?:\(T\))?"
+)
+# `_TOKEN_END` before the new-citation guard is what stops the list consuming a PREFIX of
+# the next citation's title: in "…§§ 1983 and 12 U.S.C. § 34" the guard rejects `12`
+# (a code follows), and without a completeness check the section would backtrack to `1` --
+# whose lookahead passes because `2` follows - emitting a phantom title-42 section 1 whose
+# span then suppressed the real `12 U.S.C. § 34` as an overlap.
+_USC_LIST_TAIL = re.compile(
+    rf"{_LIST_SEP}(?P<section>{_USC_SECTION_BARE}){_TOKEN_END}{_NOT_A_NEW_CITATION}"
+)
 # A USC list member carries its subsection inline (``§§ 154(i), 4(i)``). Split it back out so a
 # list member is identical to the same citation written as a primary (which yields section
 # ``4`` + subsection ``(i)``) — otherwise one provision produces two different edges. CFR is
 # deliberately NOT split: there, parenthesised material is *inside* the section identity.
 _USC_LIST_SPLIT = re.compile(
-    r"^(?P<section>\d+[A-Za-z]*(?:_\d+)?)(?P<subsection>(?:\([0-9A-Za-z]{1,4}\))*)$"
+    rf"^(?P<section>{_USC_SECTION_TOKEN})(?P<subsection>(?:\([0-9A-Za-z]{{1,4}}\))*)$"
 )
 _CFR_LIST_TAIL = re.compile(rf"{_LIST_SEP}(?P<section>{_CFR_SECTION_BARE}){_NOT_A_NEW_CITATION}")
 _LIST_TAILS = {FederalCorpus.USC: _USC_LIST_TAIL, FederalCorpus.CFR: _CFR_LIST_TAIL}
@@ -553,14 +613,10 @@ class CorpusSelfCheck:
     recovered: int = 0   # parsed, a structured field was NULL, nothing present disagreed
     mismatch: int = 0    # parsed but a PRESENT structured field disagrees (a real gap)
     abstained: int = 0
-    mismatch_examples: list[tuple[str, str, str]] = None  # (citation, parsed, expected)
-    abstained_examples: list[str] = None                  # citations that did not parse
-
-    def __post_init__(self) -> None:
-        if self.mismatch_examples is None:
-            self.mismatch_examples = []
-        if self.abstained_examples is None:
-            self.abstained_examples = []
+    # (citation, parsed, expected); `default_factory` rather than a None sentinel so the
+    # declared type is the real one and `uv run mypy src` — a required CI step — passes.
+    mismatch_examples: list[tuple[str, str, str]] = field(default_factory=list)
+    abstained_examples: list[str] = field(default_factory=list)  # citations that did not parse
 
 
 def _normalize_section(value: str | None) -> str:

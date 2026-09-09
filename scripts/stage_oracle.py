@@ -145,7 +145,7 @@ def parse_title_spec(spec: str) -> list[int]:
     return sorted(titles)
 
 
-def _require_valid_xml(name: str, data: bytes) -> None:
+def _require_valid_xml(name: str, data: bytes, expected_root: str | None = None) -> None:
     """Reject an empty body or an HTML error page masquerading as the source XML."""
     if not data.strip():
         raise ValueError(f"{name}: empty response — refusing to stage a zero-byte oracle")
@@ -157,8 +157,18 @@ def _require_valid_xml(name: str, data: bytes) -> None:
     # A common failure is a well-formed *HTML* error page (200-with-body, or a
     # soft 404). Legal source XML never has an <html> root, so reject it rather than
     # certify an error page as the oracle.
-    if root.tag.rsplit("}", 1)[-1].casefold() == "html":
+    tag = root.tag.rsplit("}", 1)[-1].casefold()
+    if tag == "html":
         raise ValueError(f"{name}: response is an HTML document, not source XML")
+    if expected_root is not None and tag != expected_root.casefold():
+        # Well-formedness alone certified an API error body: the eCFR versioner answers
+        # some failures with <error>…</error>, which parses, is not HTML, and would have
+        # been written and checksum-pinned as if it were a title. The title then vanished
+        # from the denominator while the run still reported success.
+        raise ValueError(
+            f"{name}: expected a <{expected_root}> document, got <{tag}> — refusing to "
+            f"stage what is not the requested source"
+        )
 
 
 def ecfr_title_url(template: str, title: int) -> str:
@@ -177,12 +187,12 @@ def staging_marker(out_dir: Path) -> Path:
     return out_dir.parent / f".{out_dir.name}.staging-state.json"
 
 
-def _resumable(path: Path) -> bool:
+def _resumable(path: Path, *, expected_root: str | None = None) -> bool:
     """Is an already-present title file usable as-is? Re-validated, never trusted."""
     if not path.is_file():
         return False
     try:
-        _require_valid_xml(path.name, path.read_bytes())
+        _require_valid_xml(path.name, path.read_bytes(), expected_root=expected_root)
     except (ValueError, OSError):
         return False
     return True
@@ -226,7 +236,7 @@ def stage_ecfr(
     for title in titles:
         name = f"title-{title}.xml"
         path = out_dir / name
-        if resume and _resumable(path):
+        if resume and _resumable(path, expected_root="ECFR"):
             staged.append(path)
             reused.append(title)
             continue
@@ -241,7 +251,7 @@ def stage_ecfr(
                 )
             missing.append(title)
             continue
-        _require_valid_xml(name, data)
+        _require_valid_xml(name, data, expected_root="ECFR")
         path.write_bytes(data)
         staged.append(path)
     if not staged:

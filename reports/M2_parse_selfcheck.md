@@ -23,8 +23,14 @@ expected-abstention baseline, not scored.
 
 | File | Rows | Parsed | Exact | Recovered | Mismatch | Abstained | Correct rate |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| us_federal_regulations | 220,018 | 220,012 | 218,309 | 1,703 | 0 | 6 | 100.00% |
-| **all** | **220,018** | **220,012** | **218,309** | **1,703** | **0** | **6** | **100.00%** |
+| us_federal_regulations | 220,018 | 220,012 | 218,308 | 1,703 | 1 | 6 | 100.00% |
+| **all** | **220,018** | **220,012** | **218,308** | **1,703** | **1** | **6** | **100.00%** |
+
+Mismatch examples (CFR, first 15 by citation):
+
+| Citation | Parsed | Expected |
+|---|---|---|
+| `48 C.F.R. § 312.202(d)` | `T48 S'312.202'` | `T48 S'312.202(d)'` |
 
 Abstention examples (CFR, first 15 by citation):
 

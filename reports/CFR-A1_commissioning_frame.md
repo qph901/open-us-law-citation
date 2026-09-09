@@ -22,7 +22,9 @@ denominator — is pending those bytes. Accordingly this emits **no**
 | `candidate_segmented` | 31 | 2.9% | disjoint rows with a mid-thought continuation seam — the only composer candidates |
 | `undetermined` | 444 | 41.0% | no evidence either way — abstain |
 
-Groups containing a wholly-contained pair: **365**. Groups with any continuation seam: **34**.
+Groups where ONE member contains every other member (what superset selection actually requires): **327**. Groups containing merely *a* contained pair: **365** — the difference is groups of 3+ rows where a pair is contained but no member subsumes the group, so selecting a containing row would discard another member's text.
+
+Groups with any continuation seam: **34**.
 
 ## Overlap distribution (non-duplicate groups)
 
@@ -148,15 +150,23 @@ on whether *superset selection* is permitted:
 
 - **Abstain on everything not provably safe** (only all-identical groups resolve): **78.6%**
   (851 of 1,083) -- above the 50% trigger.
-- **Also allow superset selection** where one row's text wholly contains another's, taking
-  the containing row: **44.9%** (486 of 1,083) -- below the trigger.
+- **Also allow superset selection**, where ONE member contains every other member of its
+  group: **48.4%** (524 of 1,083) -- below the trigger.
 
-Superset selection is provably never *partial relative to the group's own members*: the
-containing row holds every byte the contained row held, so nothing is dropped. It is **not**
-proof of completeness against the official section -- the containing row may itself be
-truncated, which only the pinned eCFR edition can settle. The recommendation is therefore
-to treat superset selection as a candidate CFR-A2 rule whose `complete` claim stays gated
-on the eCFR half of CFR-A1, and to read 78.6% as the abstention rate that holds until then.
+Superset selection is lossless only against a **whole-group** superset. An earlier version
+of this report used "contains *a* contained pair" instead, which is a weaker property: it
+counted 365 groups where 327 qualify, and quoted 44.9%. With three or more rows a group can
+hold a contained pair while no member subsumes the group -- `CFR_T10_P50_S50_54` has members
+of 1,722, 37,465 and 36,606 characters, and neither large member contains the other -- so
+selecting a "containing" row there would silently discard another member's text, which is
+the hard failure this spike has zero tolerance for.
+
+Against a whole-group superset the guarantee does hold: that member holds every byte every
+other member holds, so selection drops nothing. It is still **not** proof of completeness
+against the official section -- the containing member may itself be truncated, which only
+the pinned eCFR edition can settle. So superset selection remains a candidate CFR-A2 rule
+whose `complete` claim stays gated on the eCFR half of CFR-A1, and 78.6% remains the
+abstention rate that holds until then.
 
 ## What is NOT established here
 

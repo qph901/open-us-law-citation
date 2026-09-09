@@ -545,6 +545,11 @@ def _add_entry(counts: dict[str, int], entry: CrosswalkEntry) -> None:
     if entry.official is not None and not reserved:
         counts["expected"] += 1
     counts[entry.structural_status.value] += 1
+    if reserved:
+        # Reserved entries left `expected`, so they must leave every rate's NUMERATOR too.
+        # Counting them as stale produced stale_percent = 200.0000% on a two-entry fixture:
+        # a numerator drawn from a larger population than its own denominator.
+        return
     if entry.currency_status == CurrencyStatus.STALE:
         counts["stale"] += 1
     elif entry.currency_status == CurrencyStatus.ALIGNED:
@@ -555,8 +560,7 @@ def _add_entry(counts: dict[str, int], entry: CrosswalkEntry) -> None:
         counts["pending_currency"] += 1
     else:
         counts["not_applicable_currency"] += 1
-    if entry.official is None or reserved:
-        # A reserved section has no operative text, so it enters no text-agreement bucket.
+    if entry.official is None:
         return
     if entry.text_agreement == TextAgreement.EXACT:
         counts["exact_text"] += 1
@@ -1169,6 +1173,16 @@ def inventory_from_xml(
     titles_seen: dict[str, str] = {}
     for name, data in _xml_documents(path):
         produced = list(parser(name, data, source_url))
+        if not produced:
+            # Only a GLOBALLY empty inventory used to raise, so one bad or empty document
+            # could contribute nothing while other titles kept the run "successful" — a
+            # silent denominator loss. A staged document always has sections; a title
+            # reserved in its entirety is answered with 404 and is never staged at all.
+            raise ValueError(
+                f"{name}: produced no section provisions. A staged official document must "
+                f"contribute at least one section; refusing to build a denominator that "
+                f"silently omits it."
+            )
         for title in {item.key.title for item in produced}:
             _reject_repeated_title(titles_seen, name, title)
         provisions.extend(produced)

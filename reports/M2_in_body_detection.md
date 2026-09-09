@@ -17,8 +17,8 @@ and is never a detector miss. Field presence is a comparison signal, not a recal
 
 | File | Rows | Candidate bodies | With detection | USC mentions | CFR mentions |
 |---|---:|---:|---:|---:|---:|
-| us_federal_regulations | 582,054 | 424,281 (72.89%) | 286,492 | 2,015,801 | 1,313,031 |
-| us_federal_statutes | 54,853 | 17,533 (31.96%) | 12,286 | 64,978 | 1,641 |
+| us_federal_regulations | 582,054 | 424,281 (72.89%) | 283,196 | 1,854,847 | 1,312,852 |
+| us_federal_statutes | 54,853 | 17,533 (31.96%) | 12,284 | 64,967 | 1,641 |
 
 ## Agreement with the dataset's cross-references (de-duplicated edges)
 
@@ -28,10 +28,10 @@ dataset did not list; `dataset-only` = a cross-reference the detector did not em
 
 | File | Corpus | both | detector-only | dataset-only |
 |---|---|---:|---:|---:|
-| us_federal_regulations | USC | 56,406 | 967,120 | 6,838 |
-| us_federal_regulations | CFR | 16,886 | 727,449 | 232,522 |
-| us_federal_statutes | USC | 28,777 | 4,994 | 99,150 |
-| us_federal_statutes | CFR | 0 | 1,081 | 0 |
+| us_federal_regulations | USC | 58,640 | 868,634 | 4,604 |
+| us_federal_regulations | CFR | 27,109 | 527,559 | 222,299 |
+| us_federal_statutes | USC | 28,783 | 4,985 | 99,144 |
+| us_federal_statutes | CFR | 0 | 1,014 | 0 |
 
 ## Impossible-title detections (precision tripwire)
 
@@ -109,13 +109,13 @@ track, not something the grammar can repair.
 - `8 U.S.C. § 1351`
 - `10 U.S.C. § 3321`
 - `16 U.S.C. § 1506`
-- `16 U.S.C. § 906`
+- `20 U.S.C. § 1221`
 - `21 U.S.C. § 826`
 - `25 U.S.C. § 3601`
 - `28 U.S.C. § 2106`
 - `33 U.S.C. § 571`
 - `38 U.S.C. § 5712`
-- `42 U.S.C. § 300xx`
+- `42 U.S.C. § 1381a`
 - `42 U.S.C. § 7426`
 - `42 U.S.C. § 8373`
 - `42 U.S.C. § 9617`

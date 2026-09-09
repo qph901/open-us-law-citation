@@ -67,9 +67,9 @@ class GroupRelation(StrEnum):
 @dataclass(frozen=True, slots=True)
 class MemberRow:
     frn: int
-    text_sha256: str
-    length: int
-    text: str
+    text_sha256: str | None   # None when the row's text is NULL
+    length: int | None
+    text: str | None
 
 
 @dataclass
@@ -83,7 +83,12 @@ class GroupAnalysis:
     # Consecutive pairs where the earlier row ends mid-thought and the later starts lowercase.
     continuation_seams: int
     seams: int
-    contained_pairs: int          # one row's text wholly inside another's
+    contained_pairs: int          # SOME pair where one row's text is inside the other's
+    # A single member containing EVERY other member's text. Strictly stronger than
+    # `contained_pairs > 0`, and it is the property superset selection actually needs: with
+    # 3+ rows a group can hold a contained pair while no member subsumes the whole group,
+    # so selecting a "containing" row would DISCARD another member's text.
+    whole_group_superset: bool
     total_bytes: int
 
     @property
@@ -125,13 +130,28 @@ def _is_continuation(earlier: str, later: str) -> bool:
 
 def analyze_group(act_id: str, rows: Sequence[MemberRow]) -> GroupAnalysis:
     """Classify one group. Rows must already be ordered by physical row number."""
+    total_bytes = sum(row.length or 0 for row in rows)
+    # A member whose text is NULL makes the group's text relationship UNKNOWABLE. It must
+    # never be dropped (that shrinks reported membership and can leave a one-row remnant
+    # classified `duplicate_only`, turning missing evidence into apparent agreement) and it
+    # must never be treated as equal to anything. Abstain.
+    if any(row.text is None for row in rows):
+        return GroupAnalysis(
+            act_id=act_id, size=len(rows), relation=GroupRelation.UNDETERMINED,
+            distinct_hashes=len({row.text_sha256 for row in rows}),
+            max_overlap_ratio=0.0, continuation_seams=0, seams=max(len(rows) - 1, 0),
+            contained_pairs=0, whole_group_superset=False, total_bytes=total_bytes,
+        )
+    # Past the guard above every text is present; bind them once so the analysis below is
+    # plainly total (and type-checks) rather than repeatedly re-proving non-nullness.
+    texts: list[str] = [row.text for row in rows if row.text is not None]
     hashes = {row.text_sha256 for row in rows}
-    total_bytes = sum(row.length for row in rows)
     if len(hashes) == 1:
         return GroupAnalysis(
             act_id=act_id, size=len(rows), relation=GroupRelation.DUPLICATE_ONLY,
             distinct_hashes=1, max_overlap_ratio=1.0, continuation_seams=0,
-            seams=max(len(rows) - 1, 0), contained_pairs=0, total_bytes=total_bytes,
+            seams=max(len(rows) - 1, 0), contained_pairs=0, whole_group_superset=True,
+            total_bytes=total_bytes,
         )
 
     # Overlap/containment is a property of the *pair*, not of adjacency, so it is measured
@@ -139,9 +159,9 @@ def analyze_group(act_id: str, rows: Sequence[MemberRow]) -> GroupAnalysis:
     # physically consecutive (67 of the 1,083 v2026.08 groups have 3 or 4 rows).
     max_ratio = 0.0
     contained = 0
-    for i in range(len(rows)):
-        for j in range(i + 1, len(rows)):
-            a, b = rows[i].text, rows[j].text
+    for i in range(len(texts)):
+        for j in range(i + 1, len(texts)):
+            a, b = texts[i], texts[j]
             shorter = min(len(a), len(b)) or 1
             overlap = max(_common_prefix(a, b), _common_suffix(a, b))
             max_ratio = max(max_ratio, overlap / shorter)
@@ -151,9 +171,9 @@ def analyze_group(act_id: str, rows: Sequence[MemberRow]) -> GroupAnalysis:
     # physical order resumes this one, so it is measured only across consecutive seams.
     continuations = 0
     seams = 0
-    for earlier, later in zip(rows, rows[1:]):
+    for earlier, later in zip(texts, texts[1:]):
         seams += 1
-        if _is_continuation(earlier.text, later.text):
+        if _is_continuation(earlier, later):
             continuations += 1
 
     if contained or max_ratio >= _OVERLAP_RATIO:
@@ -163,10 +183,11 @@ def analyze_group(act_id: str, rows: Sequence[MemberRow]) -> GroupAnalysis:
     else:
         relation = GroupRelation.UNDETERMINED
 
+    whole = any(all(other in candidate for other in texts) for candidate in texts)
     return GroupAnalysis(
         act_id=act_id, size=len(rows), relation=relation, distinct_hashes=len(hashes),
         max_overlap_ratio=max_ratio, continuation_seams=continuations, seams=seams,
-        contained_pairs=contained, total_bytes=total_bytes,
+        contained_pairs=contained, whole_group_superset=whole, total_bytes=total_bytes,
     )
 
 
@@ -190,7 +211,6 @@ SELECT r.act_id,
        r.text
 FROM read_parquet(?, file_row_number=true) r
 SEMI JOIN multi m ON m.act_id = r.act_id
-WHERE r.text IS NOT NULL
 ORDER BY r.act_id, frn
 """
 
@@ -240,7 +260,12 @@ def build_frame(
     grouped: dict[str, list[MemberRow]] = {}
     for act_id, frn, text_sha256, length, text in rows:
         grouped.setdefault(act_id, []).append(
-            MemberRow(frn=int(frn), text_sha256=text_sha256, length=int(length), text=text)
+            MemberRow(
+                frn=int(frn),
+                text_sha256=text_sha256,
+                length=int(length) if length is not None else None,
+                text=text,
+            )
         )
     frame = CommissioningFrame(
         corpus_file=path.name.replace(".parquet", ""),
@@ -291,15 +316,23 @@ on whether *superset selection* is permitted:
 
 - **Abstain on everything not provably safe** (only all-identical groups resolve): **78.6%**
   (851 of 1,083) -- above the 50% trigger.
-- **Also allow superset selection** where one row's text wholly contains another's, taking
-  the containing row: **44.9%** (486 of 1,083) -- below the trigger.
+- **Also allow superset selection**, where ONE member contains every other member of its
+  group: **48.4%** (524 of 1,083) -- below the trigger.
 
-Superset selection is provably never *partial relative to the group's own members*: the
-containing row holds every byte the contained row held, so nothing is dropped. It is **not**
-proof of completeness against the official section -- the containing row may itself be
-truncated, which only the pinned eCFR edition can settle. The recommendation is therefore
-to treat superset selection as a candidate CFR-A2 rule whose `complete` claim stays gated
-on the eCFR half of CFR-A1, and to read 78.6% as the abstention rate that holds until then.
+Superset selection is lossless only against a **whole-group** superset. An earlier version
+of this report used "contains *a* contained pair" instead, which is a weaker property: it
+counted 365 groups where 327 qualify, and quoted 44.9%. With three or more rows a group can
+hold a contained pair while no member subsumes the group -- `CFR_T10_P50_S50_54` has members
+of 1,722, 37,465 and 36,606 characters, and neither large member contains the other -- so
+selecting a "containing" row there would silently discard another member's text, which is
+the hard failure this spike has zero tolerance for.
+
+Against a whole-group superset the guarantee does hold: that member holds every byte every
+other member holds, so selection drops nothing. It is still **not** proof of completeness
+against the official section -- the containing member may itself be truncated, which only
+the pinned eCFR edition can settle. So superset selection remains a candidate CFR-A2 rule
+whose `complete` claim stays gated on the eCFR half of CFR-A1, and 78.6% remains the
+abstention rate that holds until then.
 
 ## What is NOT established here
 
@@ -360,8 +393,14 @@ def render_report(frame: CommissioningFrame, snapshot: str) -> str:
     for rel in GroupRelation:
         A(f"| `{rel}` | {counts[rel]:,} | {_pct(counts[rel], total)} | {meanings[rel]} |")
     A("")
-    A(f"Groups containing a wholly-contained pair: **{contained:,}**. "
-      f"Groups with any continuation seam: "
+    whole = sum(1 for g in non_dup if g.whole_group_superset)
+    A(f"Groups where ONE member contains every other member (what superset selection "
+      f"actually requires): **{whole:,}**. Groups containing merely *a* contained pair: "
+      f"**{contained:,}** — the difference is groups of 3+ rows where a pair is contained "
+      f"but no member subsumes the group, so selecting a containing row would discard "
+      f"another member's text.")
+    A("")
+    A(f"Groups with any continuation seam: "
       f"**{sum(1 for g in frame.groups if g.continuation_seams):,}**.")
     A("")
     A("## Overlap distribution (non-duplicate groups)")

@@ -84,6 +84,23 @@ NOTES_SPLIT_RE = re.compile(
 )
 
 
+def _require_unique_act_ids(frame: "pl.DataFrame", label: str) -> None:
+    """Refuse a frame whose act_id repeats — this diff assumes one row per id.
+
+    `act_id` is unique in every statute corpus but NOT in regulations, where one id can
+    cover several rows (M0.5A). Comparing those here would let row order decide whether a
+    provision counts as amended.
+    """
+    ids = frame["act_id"].to_list()
+    if len(ids) != len(set(ids)):
+        repeated = sorted({i for i in ids if ids.count(i) > 1})[:3]
+        raise ValueError(
+            f"{label} frame repeats act_id (e.g. {repeated}); this comparison assumes one "
+            f"row per act_id. Regulations corpora collide by design — compare complete "
+            f"identity groups instead of raw rows."
+        )
+
+
 def _operative(text: str | None) -> str:
     return NOTES_SPLIT_RE.split(text or "", maxsplit=1)[0].strip()
 
@@ -112,6 +129,14 @@ def diff(old: pl.DataFrame, new: pl.DataFrame) -> dict:
     old_ids = set(old["act_id"].to_list())
     new_ids = set(new["act_id"].to_list())
     common = old_ids & new_ids
+
+    # This comparison keys one row per act_id, so a corpus where act_id repeats is out of
+    # scope and must be REFUSED, not silently mis-measured. Building the dicts blind kept
+    # only the last row per id, which made the result depend on physical row order: the
+    # same two rows in the opposite order reported an amendment that did not exist.
+    # Regulations legitimately repeat act_id (M0.5A), so this is reachable input.
+    _require_unique_act_ids(old, "old")
+    _require_unique_act_ids(new, "new")
 
     old_hash = dict(zip(old["act_id"].to_list(), old["_text_hash"].to_list()))
     new_hash = dict(zip(new["act_id"].to_list(), new["_text_hash"].to_list()))
