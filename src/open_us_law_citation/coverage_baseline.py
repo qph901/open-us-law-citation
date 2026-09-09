@@ -920,6 +920,33 @@ def _flatten_xml_text(element: ET.Element) -> str:
     return "\n".join(part.strip() for part in element.itertext() if part.strip())
 
 
+def _flatten_xml_text_excluding(element: ET.Element, skip: ET.Element | None) -> str:
+    """Flatten an element's text, omitting one direct child's subtree.
+
+    Used to keep an eCFR section's ``<HEAD>`` out of its operative text. The heading
+    ("§ 100.1   Ethical conduct standards…") is metadata — the section number is already
+    the provision key — and the Open US Law `text` column starts at the body. Including it
+    makes EVERY provision mismatch: measured over the staged edition, exact and normalized
+    text agreement were both 0.00% across 113,224 represented provisions, and removing the
+    heading line alone brought a sampled title to 11 of 20 agreeing on normalized text.
+    """
+    parts: list[str] = []
+    if element.text and element.text.strip():
+        parts.append(element.text.strip())
+    for child in element:
+        if child is skip:
+            # The heading itself is dropped, but text that FOLLOWS it in the parent is not.
+            if child.tail and child.tail.strip():
+                parts.append(child.tail.strip())
+            continue
+        for piece in child.itertext():
+            if piece.strip():
+                parts.append(piece.strip())
+        if child.tail and child.tail.strip():
+            parts.append(child.tail.strip())
+    return "\n".join(parts)
+
+
 def _direct_child(element: ET.Element, name: str) -> ET.Element | None:
     return next((child for child in element if _local_name(child.tag) == name), None)
 
@@ -1093,7 +1120,10 @@ def _ecfr_provisions(
             key=ProvisionKey(FederalCorpus.CFR, title, section),
             official_id=official_id,
             source_url=source_url.format(title=title),
-            text=_flatten_xml_text(element),
+            # The heading is excluded from the operative text (see the helper): it is
+            # metadata, and the dataset's `text` column starts at the body, so including
+            # it would guarantee a text mismatch on every single provision.
+            text=_flatten_xml_text_excluding(element, head),
             reserved=reserved,
         )
 

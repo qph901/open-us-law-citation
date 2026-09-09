@@ -785,3 +785,66 @@ def test_ecfr_title_from_filename_matches_every_staged_file():
         name = Path(path).name
         expected = name.removeprefix("title-").removesuffix(".xml")
         assert _title_from_name(name, FederalCorpus.CFR) == expected
+
+
+def test_ecfr_operative_text_excludes_the_section_heading(tmp_path: Path):
+    """The heading is metadata — the section number is already the provision key — and the
+    Open US Law `text` column starts at the body.
+
+    Including it made EVERY provision mismatch: measured over the staged edition, exact and
+    normalized text agreement were both 0.00% across 113,224 represented provisions.
+    Excluding it took them to 65.57% and 69.73%. A reported 0% would have read as
+    catastrophic coverage failure when it was a projection artifact.
+    """
+    source = tmp_path / "title-3.xml"
+    source.write_text(
+        """<ECFR TITLE="3"><DIV5 TYPE="PART" N="100">
+        <DIV8 TYPE="SECTION" N="100.1"><HEAD>§ 100.1   Ethical conduct standards.</HEAD>
+        <P>Employees are subject to the executive branch standards.</P></DIV8>
+        </DIV5></ECFR>"""
+    )
+    inventory = inventory_from_xml(
+        source_path=source, corpus=FederalCorpus.CFR, oracle_edition="oracle:test:ecfr",
+        oracle_kind=OracleKind.ECFR, edition_date="2026-08-26",
+        source_url="https://official.example/title-{title}.xml",
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        currency_basis="point-in-time eCFR fixture",
+    )
+    provision = inventory.provisions[0]
+    body_only, _ = text_fingerprints("Employees are subject to the executive branch standards.")
+    with_heading, _ = text_fingerprints(
+        "§ 100.1   Ethical conduct standards.\n"
+        "Employees are subject to the executive branch standards."
+    )
+    assert provision.raw_text_sha256 == body_only
+    assert provision.raw_text_sha256 != with_heading
+
+
+def test_text_following_the_heading_is_kept():
+    """Only the heading's own subtree is dropped — text that follows it in the parent must
+    survive, or the fix would trade one systematic mismatch for another."""
+    import xml.etree.ElementTree as ET
+
+    from open_us_law_citation.coverage_baseline import (
+        _direct_child,
+        _flatten_xml_text_excluding,
+    )
+
+    element = ET.fromstring(
+        '<DIV8 TYPE="SECTION" N="1.1"><HEAD>§ 1.1 Scope.</HEAD>tail after head'
+        "<P>Body paragraph.</P></DIV8>"
+    )
+    head = _direct_child(element, "head")
+    flattened = _flatten_xml_text_excluding(element, head)
+    assert "Scope" not in flattened
+    assert "tail after head" in flattened and "Body paragraph." in flattened
+
+
+def test_excluding_a_missing_child_is_a_no_op():
+    """A section element with no HEAD must still project its full body."""
+    import xml.etree.ElementTree as ET
+
+    from open_us_law_citation.coverage_baseline import _flatten_xml_text_excluding
+
+    element = ET.fromstring('<DIV8 TYPE="SECTION" N="1.1"><P>Only a body.</P></DIV8>')
+    assert _flatten_xml_text_excluding(element, None) == "Only a body."
