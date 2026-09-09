@@ -130,8 +130,11 @@ def scan_file(
         ).fetchone() or (0, 0, 0, 0, 0)
         xref = (con.execute(_XREF_SQL, [p]).fetchone() or (0,))[0]
         trunc = con.execute(
+            # Same rule as the count above: one definition, not a second literal that
+            # happens to agree — a sample that disagreed with its own count is worse than
+            # no sample.
             _SAMPLE_SQL.format(chars=_SAMPLE_CHARS, limit=_SAMPLE_LIMIT,
-                               predicate="regexp_matches(trim(text), '^[a-z]')"),
+                               predicate=f"regexp_matches(trim(text), '{_LOWER_START}')"),
             [p],
         ).fetchall()
         chrome = con.execute(

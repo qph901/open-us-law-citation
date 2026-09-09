@@ -30,9 +30,24 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-# act_id namespace prefixes observed, e.g. USC_T10_C1001_S10001,
-# STATE_AK_T10_C10.06_S10.06.005, SCONST_AK_A10_S0.
-ACT_ID_PREFIX_RE = re.compile(r"^(?P<prefix>[A-Z]+(?:_[A-Z]{2})?)_")
+# The act_id *namespace scheme* — corpus AND jurisdiction — e.g. USC_T10_C1001_S10001 ->
+# "USC", STATE_AK_T10_C10.06_S10.06.005 -> "STATE_AK", SCONST_AK_A10_S0 -> "SCONST_AK".
+#
+# This is DELIBERATELY NOT `derived.identity_strategies.act_id_prefix`, which returns just
+# "STATE" for that same id. The two answer different questions and must not be "unified":
+#
+#   act_id_prefix        -> the namespace an identity STRATEGY routes on (CFR_/FR_/STATE_)
+#   ACT_ID_SCHEME_REGEX  -> the namespace SCHEME this report enumerates, which is the
+#                           point of the M0 table: it shows that a bare act_id is only
+#                           unique within corpus+jurisdiction, hence the (state, corpus,
+#                           act_id) uniqueness rule.
+#
+# Making them agree would collapse every state into one row and destroy that finding.
+# `test_recon_prefix.py` asserts they differ, so the difference cannot be "fixed" silently.
+#
+# A plain string, not a compiled Python pattern: it is evaluated by polars (Rust regex),
+# and naming it keeps the only copy visible to a pattern survey and testable on its own.
+ACT_ID_SCHEME_REGEX = r"^([A-Z]+(?:_[A-Z]{2})?)_"
 
 # The fields we treat as the structural hierarchy for a statute/regulation row.
 HIERARCHY_FIELDS = ["title_number", "chapter", "section_number"]
@@ -219,7 +234,7 @@ def analyze_file(path: Path) -> FileReport:
             if dupes > 0 else []
         )
         pfx_df = (
-            aid.select(pl.col("act_id").str.extract(r"^([A-Z]+(?:_[A-Z]{2})?)_", 1).alias("_pfx"))
+            aid.select(pl.col("act_id").str.extract(ACT_ID_SCHEME_REGEX, 1).alias("_pfx"))
             .group_by("_pfx").len()
         )
         prefixes = {(r["_pfx"] or "<no-prefix>"): r["len"] for r in pfx_df.iter_rows(named=True)}
