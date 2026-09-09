@@ -130,7 +130,7 @@ def _colliding_rows(con: duckdb.DuckDBPyConnection, path: Path):
     WITH b AS (
         SELECT file_row_number AS frn,
                act_id,
-               regexp_extract(act_id, '^[A-Za-z]+', 0) AS ns,
+               split_part(COALESCE(act_id, ''), '_', 1) AS ns,
                md5(text) AS h,
                {struct_sel}
         FROM read_parquet(?, file_row_number=true)
@@ -211,7 +211,7 @@ def _segment_relationship_sample(
 
     placeholders = ", ".join("?" for _ in sampled)
     q = f"""
-    SELECT regexp_extract(act_id, '^[A-Za-z]+', 0) AS ns, act_id,
+    SELECT split_part(COALESCE(act_id, ''), '_', 1) AS ns, act_id,
            file_row_number AS frn, text
     FROM read_parquet(?, file_row_number=true)
     WHERE act_id IN ({placeholders})

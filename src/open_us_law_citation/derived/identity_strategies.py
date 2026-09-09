@@ -75,8 +75,28 @@ _RAW_TEXT_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def act_id_prefix(act_id: str | None) -> str:
-    """The namespace prefix of an ``act_id`` (``CFR_T17_..`` -> ``CFR``)."""
+    """The namespace prefix of an ``act_id`` (``CFR_T17_..`` -> ``CFR``).
+
+    The **single definition** of an ``act_id`` namespace. :data:`ACT_ID_NAMESPACE_SQL` is
+    its SQL twin for the DuckDB harnesses, and ``test_act_id_namespace.py`` runs both over
+    the same adversarial inputs and asserts they agree.
+    """
     return (act_id or "").split("_", 1)[0]
+
+
+# The SQL twin of :func:`act_id_prefix`, for harnesses that must compute the namespace
+# inside DuckDB rather than in Python (identity_collisions, segment_provenance).
+#
+# It is deliberately NOT a regex. It replaced ``regexp_extract(act_id, '^[A-Za-z]+', 0)``,
+# which took the leading run of *letters* while Python takes everything before the first
+# underscore -- two different definitions that happened to coincide on every one of the
+# 2,978,617 v2026.08 rows, so nothing would have reported the divergence. They differ on
+# ``USC2_T5`` (``USC`` vs ``USC2``), ``123_ABC`` (``''`` vs ``123``) and any id with no
+# underscore, so a future snapshot could have split them silently.
+#
+# ``COALESCE`` matches Python's ``act_id or ""`` for a null act_id (none exist at v2026.08,
+# verified across all 229 files, but the twin should agree everywhere, not just in practice).
+ACT_ID_NAMESPACE_SQL = "split_part(COALESCE({col}, ''), '_', 1)"
 
 
 @dataclass(frozen=True, slots=True)

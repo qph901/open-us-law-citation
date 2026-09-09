@@ -115,7 +115,7 @@ def _namespace_collisions(
     q = """
     WITH base AS (
         SELECT act_id,
-               regexp_extract(act_id, '^[A-Za-z]+', 0) AS ns,
+               split_part(COALESCE(act_id, ''), '_', 1) AS ns,
                text,
                word_count,
                source_url
