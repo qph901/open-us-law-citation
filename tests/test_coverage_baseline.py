@@ -28,6 +28,7 @@ from open_us_law_citation.coverage_baseline import (
     render_manifest_json,
     render_markdown,
     render_official_inventory,
+    scan_dataset_candidates,
     text_fingerprints,
     title_in_range,
 )
@@ -550,3 +551,162 @@ def test_title_range_has_one_definition_shared_with_the_m2_grammar():
     assert grammar_max is TITLE_MAX
     assert title_in_range(FederalCorpus.USC, "54") and not title_in_range(FederalCorpus.USC, "55")
     assert title_in_range(FederalCorpus.CFR, "50") and not title_in_range(FederalCorpus.CFR, "51")
+
+
+def _reference_candidates(path, *, snapshot, corpus):
+    """The pre-DuckDB implementation, kept here as the oracle for the differential test."""
+    from open_us_law_citation.coverage_baseline import DatasetCandidate
+    from open_us_law_citation.source_record import iter_source_records
+
+    out = []
+    for record in iter_source_records(path, snapshot):
+        act_id = record.column("act_id") or ""
+        if corpus == FederalCorpus.CFR and act_id.startswith("FR_"):
+            continue
+        if not act_id.startswith("USC_" if corpus == FederalCorpus.USC else "CFR_"):
+            continue
+        out.append(DatasetCandidate.from_source_record(record, corpus))
+    return out
+
+
+def _federal_fixture(path, rows):
+    """A real-shaped 24-column file: canonical column order and Arrow types."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from open_us_law_citation.source_record import EXPECTED_COLUMNS
+
+    ints = {"word_count", "last_amended_year", "subsection_count", "year"}
+    schema = pa.schema(
+        [pa.field(n, pa.int64() if n in ints else pa.string()) for n in EXPECTED_COLUMNS]
+    )
+    cols = {n: [r.get(n) for r in rows] for n in EXPECTED_COLUMNS}
+    pq.write_table(pa.table(cols, schema=schema), path, row_group_size=2)
+
+
+_FED_ROWS = [
+    {"act_id": "CFR_T1_S1", "section_number": "1.0", "title_number": "1",
+     "source_url": "https://e.example/0", "text": "Body A"},
+    {"act_id": "CFR_T1_S2", "section_number": "1.1", "title_number": "1",
+     "source_url": "https://e.example/1", "text": "Body B"},
+    {"act_id": "FR_DOC_1", "section_number": "1.2", "title_number": "1",
+     "source_url": "https://e.example/2", "text": "FR body"},
+    {"act_id": "CFR_T1_S3", "section_number": "1.3", "title_number": "1",
+     "source_url": "https://e.example/3", "text": None},
+    {"act_id": "USC_T1_S9", "section_number": "9", "title_number": "1",
+     "source_url": "https://e.example/4", "text": "USC body"},
+    {"act_id": "CFR_T1_S4", "section_number": "1.5", "title_number": "1",
+     "source_url": "https://e.example/5", "text": ""},
+    {"act_id": "CFR_T1_S5", "section_number": "1.6", "title_number": "1",
+     "source_url": "https://e.example/6", "text": "Body C"},
+]
+
+
+def test_duckdb_candidate_scan_matches_the_row_group_reader_exactly(tmp_path: Path):
+    """`scan_dataset_candidates` streams through DuckDB because `iter_source_records`
+    reads a whole row group with no column projection — row group 24 of
+    us_federal_regulations.parquet is 3.10 GB of text and peaks over 5.9 GB, OOM-killing a
+    14 GB box (measured), and that is exactly the file COV-1A's CFR half runs on.
+
+    Changing the engine must not change identity: `source_record_id` derives from the
+    physical row ordinal, so DuckDB's `file_row_number` has to equal what the row-group
+    reader assigns. This asserts the two paths agree candidate-for-candidate, across row
+    group boundaries (the fixture has several).
+    """
+    path = tmp_path / "fed.parquet"
+    _federal_fixture(path, _FED_ROWS)
+
+    got, evidence = scan_dataset_candidates(
+        path, snapshot="v-test", dataset_revision="rev", corpus=FederalCorpus.CFR,
+        legal_content_cutoff="2026-01-01", cutoff_status=CutoffStatus.ESTABLISHED,
+    )
+    want = _reference_candidates(path, snapshot="v-test", corpus=FederalCorpus.CFR)
+
+    assert [c.source_record_id for c in got] == [c.source_record_id for c in want]
+    assert [c.key for c in got] == [c.key for c in want]
+    assert [c.raw_text_sha256 for c in got] == [c.raw_text_sha256 for c in want]
+    assert [c.normalized_text_sha256 for c in got] == [c.normalized_text_sha256 for c in want]
+    assert [c.source_url for c in got] == [c.source_url for c in want]
+    assert evidence.excluded_federal_register_rows == 1      # FR excluded from CFR
+    assert evidence.excluded_other_rows == 1                 # the USC row
+    # A null body and an empty body must not share a fingerprint.
+    raw = [c.raw_text_sha256 for c in got]
+    assert None in raw and len({h for h in raw if h}) == len([h for h in raw if h])
+
+
+def test_candidate_scan_rejects_a_file_with_the_wrong_schema(tmp_path: Path):
+    """Streaming skips iter_source_records, so the 24-column gate had to be restored here;
+    without it an off-schema file would flow into a coverage claim unchecked."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    path = tmp_path / "bad.parquet"
+    pq.write_table(pa.table({"act_id": pa.array(["CFR_T1_S1"]), "text": pa.array(["x"])}), path)
+    with pytest.raises(Exception, match="24-column"):
+        scan_dataset_candidates(
+            path, snapshot="v-test", dataset_revision="rev", corpus=FederalCorpus.CFR,
+            legal_content_cutoff=None, cutoff_status=CutoffStatus.UNRESOLVED,
+        )
+
+
+def test_candidate_scan_still_verifies_the_dataset_checksum(tmp_path: Path):
+    """The checksum gate moved with the reader; losing it would let unverified bytes into
+    a coverage claim."""
+    path = tmp_path / "fed.parquet"
+    _federal_fixture(path, _FED_ROWS[:1])
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        scan_dataset_candidates(
+            path, snapshot="v-test", dataset_revision="rev", corpus=FederalCorpus.CFR,
+            expected_sha256="f" * 64,
+            legal_content_cutoff=None, cutoff_status=CutoffStatus.UNRESOLVED,
+        )
+
+
+def test_null_cfr_title_is_recovered_from_act_id_and_counted(tmp_path: Path):
+    """CLAUDE.md records the flat hierarchy columns as unreliable, and `title_number` is
+    null on 1,703 of the 220,018 real CFR rows — the first at physical row 63, which
+    aborted the whole scan before this.
+
+    `act_id` encodes the title unambiguously (`CFR_T10_P54_S54_17` -> 10), so this is
+    recovery from a more reliable field, not a guess. It is counted rather than silent:
+    how far the flat columns can be trusted is itself a coverage-relevant fact.
+    """
+    rows = [
+        {"act_id": "CFR_T10_P54_S54_17", "section_number": "54.17", "title_number": None,
+         "source_url": "https://e.example/a", "text": "Body"},
+        {"act_id": "CFR_T1_S1", "section_number": "1.1", "title_number": "1",
+         "source_url": "https://e.example/b", "text": "Body"},
+    ]
+    path = tmp_path / "fed.parquet"
+    _federal_fixture(path, rows)
+    got, evidence = scan_dataset_candidates(
+        path, snapshot="v-test", dataset_revision="rev", corpus=FederalCorpus.CFR,
+        legal_content_cutoff=None, cutoff_status=CutoffStatus.UNRESOLVED,
+    )
+    assert [c.key.title for c in got] == ["10", "1"]
+    assert evidence.recovered_title_rows == 1
+
+
+def test_an_unrecoverable_row_still_fails_loudly(tmp_path: Path):
+    """Recovery is not a licence to invent: an act_id that carries no title must raise,
+    not silently drop the row out of the dataset side and inflate `missing`."""
+    rows = [{"act_id": "CFR_NOTATITLE", "section_number": "1.1", "title_number": None,
+             "source_url": None, "text": "Body"}]
+    path = tmp_path / "fed.parquet"
+    _federal_fixture(path, rows)
+    with pytest.raises(ValueError, match="lacks title/section/act_id"):
+        scan_dataset_candidates(
+            path, snapshot="v-test", dataset_revision="rev", corpus=FederalCorpus.CFR,
+            legal_content_cutoff=None, cutoff_status=CutoffStatus.UNRESOLVED,
+        )
+
+
+def test_title_recovery_pattern_is_anchored_to_canonical_cfr_act_ids():
+    from open_us_law_citation.coverage_baseline import _CFR_TITLE_FROM_ACT_ID
+
+    assert _CFR_TITLE_FROM_ACT_ID.match("CFR_T10_P54_S54_17").group(1) == "10"
+    assert _CFR_TITLE_FROM_ACT_ID.match("CFR_T5_P1_S1_1").group(1) == "5"
+    # Negative cases: it must not fire on anything but a canonical CFR act_id.
+    for bad in ("FR_PRORULE_2025-06180", "USC_T42_C21_S1983", "XCFR_T10_P1",
+                "CFR_P54_S54_17", "CFR_TX_P1", "CFR_T10"):
+        assert _CFR_TITLE_FROM_ACT_ID.match(bad) is None, bad

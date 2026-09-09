@@ -323,9 +323,16 @@ def iter_source_records(
     read: row groups are consumed in file order and rows in row-group order, so
     the ordinal is the stable within-file physical row index (0-based).
 
-    Row-group-bounded (see module docstring): peak memory ≈ one row-group of
-    ``text``; the pyarrow pool is released between groups. Safe on the 11 GB
-    federal regulations file.
+    Row-group-bounded: peak memory ≈ one row-group, which is fine for statutes and every
+    state corpus.
+
+    **NOT safe on ``us_federal_regulations.parquet``.** ``read_row_group`` here takes no
+    column projection, and row group 24 of that file holds 3.10 GB of ``text`` in 20,000
+    rows: reading it peaks above 5.9 GB and OOM-kills a 14 GB box (measured 2026-09-09).
+    An earlier version of this docstring claimed the opposite. For a full pass over that
+    file, stream through DuckDB under a hard memory limit -- see
+    ``coverage_baseline.scan_dataset_candidates`` and ``in_body_detection``, and the
+    CLAUDE.md corollary.
 
     ``verify_checksum`` (e.g. the value from ``SHA256SUMS.json``) is compared to
     the computed file checksum when given.

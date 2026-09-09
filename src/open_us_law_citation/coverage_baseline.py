@@ -34,7 +34,11 @@ from urllib.parse import urlparse
 from xml.etree import ElementTree as ET
 
 from .oracle_manifest import CutoffStatus, OracleKind, load_oracle_manifest
-from .source_record import CanonicalSourceRecord, file_sha256, iter_source_records
+from .source_record import (
+    CanonicalSourceRecord,
+    compute_source_record_id,
+    file_sha256,
+)
 
 SCHEMA_VERSION = 1
 MATCH_METHOD = "canonical_title_section_v1"
@@ -55,6 +59,11 @@ _ECFR_RESERVED_RE = re.compile(r"\[\s*reserved\s*\]", re.I)
 # The first bounded digit run in a USLM <docNumber>. Named rather than inline so it is
 # visible to a pattern survey and testable on its own; its result is range-checked.
 _USLM_DOCNUMBER_RE = re.compile(r"\b(\d+)\b")
+# A CFR act_id always encodes its title: CFR_T10_P54_S54_17 -> 10. Used only to recover a
+# NULL flat `title_number`, which CLAUDE.md records as unreliable and which is null on
+# 1,703 of the 220,018 CFR rows at v2026.08 -- all 1,703 recoverable from act_id. Anchored
+# so it cannot match anything but a CFR act_id in canonical form.
+_CFR_TITLE_FROM_ACT_ID = re.compile(r"^CFR_T(\d+)_")
 
 
 class FederalCorpus(StrEnum):
@@ -324,6 +333,10 @@ class DatasetEvidence:
     cutoff_status: CutoffStatus
     excluded_federal_register_rows: int = 0
     excluded_other_rows: int = 0
+    # Rows whose flat `title_number` was null and whose title was recovered from `act_id`.
+    # Reported, never silent: it is a measure of how far the snapshot's flat columns can be
+    # trusted, which is a coverage-relevant fact in its own right.
+    recovered_title_rows: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.cutoff_status, CutoffStatus):
@@ -337,6 +350,8 @@ class DatasetEvidence:
             self.legal_content_cutoff is not None
         ):
             raise ValueError("established dataset cutoffs require a date")
+        if self.recovered_title_rows < 0:
+            raise ValueError("recovered_title_rows must be non-negative")
         if self.excluded_federal_register_rows < 0 or self.excluded_other_rows < 0:
             raise ValueError("excluded row counts cannot be negative")
 
@@ -1094,6 +1109,48 @@ def inventory_from_xml(
     )
 
 
+# One batch of bodies in flight, never a row group. Deliberately small: the regulations
+# corpus averages ~12 KB a row but individual rows reach 4 MB.
+_CANDIDATE_BATCH_ROWS = 64
+
+# `file_row_number` IS `physical_row_ordinal` (verified against iter_source_records), so
+# `source_record_id` is unchanged by streaming through DuckDB instead of pyarrow.
+# NO `ORDER BY`: sorting inside the engine is a BLOCKING operation over the whole 11 GB
+# text column and OOMs at any sane memory limit (measured: died at 2.3 GiB before emitting
+# a row). The physical ordinal travels with each row as `frn`, so ordering is restored on
+# the compact candidate list afterwards — 220k small objects with no text attached.
+_CANDIDATE_SQL = """
+SELECT file_row_number AS frn, act_id, title_number, section_number, source_url, text
+FROM read_parquet(?, file_row_number=true)
+"""
+
+
+def _validate_source_schema(path: Path) -> None:
+    """The 24-column schema + Arrow type gate, from the footer alone."""
+    import pyarrow.parquet as pq
+
+    from .source_record import _validate_arrow_types, _validate_schema
+
+    schema = pq.ParquetFile(path).schema_arrow
+    _validate_schema([f.name for f in schema], path.name)
+    _validate_arrow_types(schema, path.name)
+
+
+def _candidate_connection(memory_limit: str, temp_dir: Path | None):
+    import duckdb
+
+    con = duckdb.connect()
+    con.execute(f"SET memory_limit='{memory_limit}'")
+    if temp_dir is not None:
+        Path(temp_dir).mkdir(parents=True, exist_ok=True)
+        con.execute(f"SET temp_directory='{Path(temp_dir).as_posix()}'")
+    con.execute("SET threads=1")
+    # ORDER BY file_row_number already fixes the order, so the order-preserving buffer is
+    # pure overhead here — and on the regulations file it is what pushes peak memory over.
+    con.execute("SET preserve_insertion_order=false")
+    return con
+
+
 def scan_dataset_candidates(
     path: str | Path,
     *,
@@ -1103,24 +1160,98 @@ def scan_dataset_candidates(
     expected_sha256: str | None = None,
     legal_content_cutoff: str | None,
     cutoff_status: CutoffStatus,
+    memory_limit: str = "3GB",
+    temp_dir: Path | None = None,
 ) -> tuple[tuple[DatasetCandidate, ...], DatasetEvidence]:
-    """Stream one federal Parquet and retain only compact provision fingerprints."""
-    candidates: list[DatasetCandidate] = []
+    """Stream one federal Parquet and retain only compact provision fingerprints.
+
+    DuckDB-streamed, **not** ``iter_source_records``. That reader calls
+    ``pf.read_row_group(rg)`` with no column projection, and row group 24 of
+    ``us_federal_regulations.parquet`` holds 3.10 GB of ``text`` in 20,000 rows: reading it
+    peaks above 5.9 GB and OOM-kills a 14 GB box (measured). The CFR half of COV-1A runs on
+    exactly that file, so this path has to stream (CLAUDE.md's corollary).
+
+    ``source_record_id`` is preserved exactly: DuckDB's ``file_row_number`` is the same
+    physical row index ``iter_source_records`` assigns as ``physical_row_ordinal`` — it is
+    verified against the real reader in ``test_coverage_baseline.py``, so the two paths
+    produce identical candidates and identity is unaffected by the change of engine.
+    """
+    path = Path(path)
+    checksum = file_sha256(path)
+    if expected_sha256 is not None and checksum != expected_sha256:
+        raise ValueError(
+            f"{path.name}: checksum mismatch "
+            f"(computed {checksum}, expected {expected_sha256})"
+        )
+
+    # Streaming through DuckDB skips iter_source_records, so the schema gate it performed
+    # has to be performed here — otherwise a file with the wrong shape would flow into a
+    # coverage claim unchecked. Reads footer metadata only; no column data is touched.
+    _validate_source_schema(path)
+
+    ordered: list[tuple[int, DatasetCandidate]] = []
     excluded_fr = 0
     excluded_other = 0
-    checksum: str | None = None
-    for record in iter_source_records(path, snapshot, verify_checksum=expected_sha256):
-        checksum = record.source_file_checksum
-        act_id = record.column("act_id") or ""
-        if corpus == FederalCorpus.CFR and act_id.startswith("FR_"):
-            excluded_fr += 1
-            continue
-        wanted_prefix = "USC_" if corpus == FederalCorpus.USC else "CFR_"
-        if not act_id.startswith(wanted_prefix):
-            excluded_other += 1
-            continue
-        candidates.append(DatasetCandidate.from_source_record(record, corpus))
-    checksum = checksum or file_sha256(path)
+    recovered_titles = 0
+    wanted_prefix = "USC_" if corpus == FederalCorpus.USC else "CFR_"
+    con = _candidate_connection(memory_limit, temp_dir)
+    try:
+        reader = con.execute(_CANDIDATE_SQL, [path.as_posix()]).to_arrow_reader(
+            _CANDIDATE_BATCH_ROWS
+        )
+        for batch in reader:
+            act_ids = batch.column("act_id").to_pylist()
+            titles = batch.column("title_number").to_pylist()
+            sections = batch.column("section_number").to_pylist()
+            urls = batch.column("source_url").to_pylist()
+            ordinals = batch.column("frn").to_pylist()
+            texts = batch.column("text")
+            for i in range(batch.num_rows):
+                act_id = act_ids[i] or ""
+                if corpus == FederalCorpus.CFR and act_id.startswith("FR_"):
+                    excluded_fr += 1
+                    continue
+                if not act_id.startswith(wanted_prefix):
+                    excluded_other += 1
+                    continue
+                title = titles[i]
+                if title is None and corpus == FederalCorpus.CFR:
+                    # The flat column is unreliable (CLAUDE.md); act_id carries the title
+                    # unambiguously. Recovery, not a guess -- and counted, not hidden.
+                    recovered = _CFR_TITLE_FROM_ACT_ID.match(act_id)
+                    if recovered is not None:
+                        title = recovered.group(1)
+                        recovered_titles += 1
+                if title is None or sections[i] is None or not act_ids[i]:
+                    raise ValueError(
+                        f"{path.name} row {ordinals[i]}: federal candidate lacks "
+                        f"title/section/act_id (act_id={act_ids[i]!r})"
+                    )
+                raw_hash, normalized_hash = text_fingerprints(
+                    texts[i].as_py() if texts[i].is_valid else None
+                )
+                ordered.append((
+                    int(ordinals[i]),
+                    DatasetCandidate(
+                        key=ProvisionKey(corpus, str(title), str(sections[i])),
+                        source_record_id=compute_source_record_id(
+                            snapshot, checksum, int(ordinals[i])
+                        ),
+                        act_id=act_ids[i],
+                        source_url=urls[i],
+                        raw_text_sha256=raw_hash,
+                        normalized_text_sha256=normalized_hash,
+                    ),
+                ))
+            del batch, texts
+    finally:
+        con.close()
+
+    # Restore physical order here rather than in SQL (see _CANDIDATE_SQL): sorting the
+    # compact candidates by their ordinal reproduces exactly what the row-group reader
+    # yields, at a fraction of the memory a blocking engine-side sort would need.
+    ordered.sort(key=lambda pair: pair[0])
+    candidates = [candidate for _, candidate in ordered]
     evidence = DatasetEvidence(
         snapshot=snapshot,
         dataset_revision=dataset_revision,
@@ -1130,6 +1261,7 @@ def scan_dataset_candidates(
         cutoff_status=cutoff_status,
         excluded_federal_register_rows=excluded_fr,
         excluded_other_rows=excluded_other,
+        recovered_title_rows=recovered_titles,
     )
     return tuple(candidates), evidence
 
