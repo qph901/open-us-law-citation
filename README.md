@@ -133,10 +133,19 @@ second.
   citations, where abstaining is the correct outcome. Stage-A **detection** is measured
   separately on a hand-labelled gold set (36 passages incl. adversarial distractors) in
   [`reports/M2_detection_metrics.md`](reports/M2_detection_metrics.md) — **precision
-  1.000, recall 1.000** (zero false positives). It handles absolute citations, enumerated
-  `§§` lists (guarding the trap where a list runs into a new citation), and the qualified
-  prose form (`section 1983 of title 42, United States Code`) which fires only when the
-  code name is present; it also caught and fixed a free-text section-truncation bug.
+  1.000, recall 1.000** (zero false positives) **on that 36-passage set**. It handles
+  absolute citations, enumerated `§§` lists (guarding the trap where a list runs into a new
+  citation), and the qualified prose form (`section 1983 of title 42, United States Code`)
+  which fires only when the code name is present; it also caught and fixed a free-text
+  section-truncation bug. **That gold-set precision did not generalise**: running the same
+  detector over every federal body
+  ([`reports/M2_in_body_detection.md`](reports/M2_in_body_detection.md)) found two defect
+  classes the 36 passages did not cover — list members folding their subsection into the
+  section, and a greedy title absorbing adjacent digits from flattened tables and dropped
+  line-leading characters. Both are fixed (`title_in_range` is enforced as a
+  `ParsedCitation` model invariant, not only a parser rule) and the corpus scan carries a
+  zero-valued regression guard, but the title check only catches *impossible* titles —
+  in-range corruption remains undetected.
 
 ## Setup
 

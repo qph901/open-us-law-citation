@@ -433,3 +433,38 @@ def test_cfr_list_member_keeps_parenthesised_material_in_the_section():
     mentions = detect_mentions("see 17 C.F.R. §§ 240.10b-5, 240.13a-1")
     assert [m.parsed.parsed_section for m in mentions] == ["240.10b-5", "240.13a-1"]
     assert all(m.parsed.parsed_subsection is None for m in mentions)
+
+
+def test_title_range_guard_rejects_impossible_titles():
+    """USC has 54 titles, the CFR 50. A citation naming a title outside its code's range
+    cannot refer to real law, so the grammar abstains rather than emitting it.
+
+    Every case here is a real detection from the v2026.08 federal corpus, where the digits
+    adjacent to the code token came from a flattened table cell, a date column, a dollar
+    amount, or a body whose leading digit was dropped at a line break.
+    """
+    for corpus_max, text in (
+        (54, "Pub. L. 95-147 U.S.C. 19"),        # a Public Law number absorbed
+        (54, "$122,661\nU.S.C. 362(a)"),          # a dollar amount from the next column
+        (54, "479 U.S.C. 238 (1986)"),            # a U.S. Reports case cite
+        (50, "on January 3, 2023\nCFR 2.2"),      # a date column
+        (50, "Implementation\n0 CFR 264.100"),    # leading digit dropped (really 40 CFR)
+    ):
+        assert detect_mentions(text) == [], f"should abstain: {text!r}"
+        assert corpus_max in (50, 54)
+
+    # The boundaries themselves are valid and still parse.
+    assert parse_citation("54 U.S.C. 100101") is not None
+    assert parse_citation("50 CFR 17.11") is not None
+    assert parse_citation("55 U.S.C. 1") is None
+    assert parse_citation("51 CFR 17.11") is None
+
+
+def test_title_range_is_a_model_invariant_not_only_a_parser_rule():
+    """Direct construction is rejected too, so no producer can route around the guard."""
+    with pytest.raises(ValueError, match="no title 147"):
+        ParsedCitation(
+            parsed_corpus=FederalCorpus.USC, parsed_title="147", parsed_section="19",
+            reference_type=ReferenceType.ABSOLUTE, parser_method="usc_grammar_v1",
+            parser_confidence=1.0,
+        )

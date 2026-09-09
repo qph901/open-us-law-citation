@@ -98,9 +98,9 @@ def test_report_is_stable(tmp_path):
     assert "M2/M4 boundary" in r1
 
 
-def test_out_of_range_title_is_counted_as_a_precision_tripwire(tmp_path):
-    """A title outside its code's range (USC 1-54) cannot name real law, so the scan counts
-    it without needing a labelled set. `Pub. L. 95-147 U.S.C. 19` parses title 147."""
+def test_impossible_title_is_never_detected_and_the_tripwire_reads_zero(tmp_path):
+    """The grammar refuses titles outside a code's range, so the tripwire is a regression
+    guard that must read zero — `Pub. L. 95-147 U.S.C. 19` parsed title 147 before the fix."""
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -121,6 +121,9 @@ def test_out_of_range_title_is_counted_as_a_precision_tripwire(tmp_path):
         path,
     )
     st = scan_file(path)
-    assert st.usc_out_of_range == 1
-    assert ("usc", "147", "19") in st.out_of_range_ex
+    assert st.usc_out_of_range == 0 and st.cfr_out_of_range == 0
+    assert st.out_of_range_ex == set()
+    # Both rows carry a code token, but only the valid citation yields a detection.
+    assert st.rows_candidate == 2 and st.rows_with_detection == 1
+    assert st.usc_detector_only_ex == {("usc", "42", "1983")}
     assert "Precision limits found at corpus scale" in render_report([st], "v2026.08")

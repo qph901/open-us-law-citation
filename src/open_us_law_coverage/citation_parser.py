@@ -93,6 +93,26 @@ class ReferenceType(StrEnum):
 # Structured parse.
 # ---------------------------------------------------------------------------
 
+# The US Code has 54 titles; the CFR has 50. A citation naming a title outside its code's
+# range cannot refer to real law, so it is rejected rather than emitted — the M2 grammar's
+# only *semantic* constraint, and the one place where knowing the corpus beats pure syntax.
+#
+# It exists because `(?P<title>\d+)` accepts any adjacent digit run, and at corpus scale the
+# snapshot's text supplies plenty that are not titles: flattened table cells (`$122,661\nU.S.C.
+# 362(a)`), date columns (`2023\nCFR 2.2`), and bodies whose leading digit was dropped at a
+# line break (`\n0 CFR 264.100`, really 40 CFR — see reports/M2_in_body_detection.md).
+#
+# It is a floor, not a cure: corruption that yields an *in-range* wrong title is invisible
+# to it. Rejecting is the abstain-rather-than-guess outcome — the missing digit is not
+# recoverable from the text, so repairing the citation would mean inventing it.
+TITLE_MAX = {FederalCorpus.USC: 54, FederalCorpus.CFR: 50}
+
+
+def title_in_range(corpus: FederalCorpus, title: str) -> bool:
+    """Is ``title`` a title number that exists in ``corpus``?"""
+    return str(title).isdigit() and 1 <= int(title) <= TITLE_MAX[corpus]
+
+
 @dataclass(frozen=True, slots=True)
 class ParsedCitation:
     """The structured components a citation string parses into (pre-resolution)."""
@@ -116,6 +136,11 @@ class ParsedCitation:
             raise ValueError("M2 grammar only emits ABSOLUTE/QUALIFIED references")
         if not str(self.parsed_title).isdigit():
             raise ValueError(f"parsed_title must be a title number, got {self.parsed_title!r}")
+        if not title_in_range(self.parsed_corpus, self.parsed_title):
+            raise ValueError(
+                f"{self.parsed_corpus} has no title {self.parsed_title} "
+                f"(1-{TITLE_MAX[self.parsed_corpus]})"
+            )
         if not self.parsed_section.strip():
             raise ValueError("parsed_section must be non-empty")
         if not self.parser_method:
@@ -199,7 +224,9 @@ def _parsed_from_absolute(
     corpus: FederalCorpus,
     method: str,
     confidence: float = _ABSOLUTE_CONFIDENCE,
-) -> ParsedCitation:
+) -> ParsedCitation | None:
+    if not title_in_range(corpus, m.group("title")):
+        return None  # not a real title: abstain rather than emit a citation to nothing
     return ParsedCitation(
         parsed_corpus=corpus,
         parsed_title=m.group("title"),
@@ -214,7 +241,11 @@ def _parsed_from_absolute(
     )
 
 
-def _parsed_from_qualified(m: re.Match, corpus: FederalCorpus, method: str) -> ParsedCitation:
+def _parsed_from_qualified(
+    m: re.Match, corpus: FederalCorpus, method: str
+) -> ParsedCitation | None:
+    if not title_in_range(corpus, m.group("title")):
+        return None
     return ParsedCitation(
         parsed_corpus=corpus,
         parsed_title=m.group("title"),
@@ -471,7 +502,10 @@ def detect_mentions(
         for m in pattern.finditer(text):
             if any(m.start() < e and s < m.end() for s, e in spans):
                 continue
-            _emit(_parsed_from_absolute(m, corpus, method), m.group(0), m.start(), m.end())
+            parsed = _parsed_from_absolute(m, corpus, method)
+            if parsed is None:
+                continue  # impossible title: emit nothing, and license no list either
+            _emit(parsed, m.group(0), m.start(), m.end())
             # Enumerated list: only a plural section sign licenses the continuation.
             if not _PLURAL_SIGN_RE.search(m.group(0)):
                 continue
@@ -506,7 +540,10 @@ def detect_mentions(
         for m in pattern.finditer(text):
             if any(m.start() < e and s < m.end() for s, e in spans):
                 continue
-            _emit(_parsed_from_qualified(m, corpus, method), m.group(0), m.start(), m.end())
+            parsed = _parsed_from_qualified(m, corpus, method)
+            if parsed is None:
+                continue
+            _emit(parsed, m.group(0), m.start(), m.end())
 
     mentions.sort(key=lambda mm: (mm.start_char, mm.end_char))
     return mentions
