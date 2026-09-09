@@ -227,6 +227,8 @@ The recon harness accepts any file glob, so it can be pointed at the full
   + an impossible-title precision tripwire).
 - `src/open_us_law_citation/cfr_assembly.py` — CFR-A1 commissioning frame
   (classifies every multi-row `CFR_*` group from the snapshot alone; emits no assembly).
+- `src/open_us_law_citation/text_integrity.py` — snapshot text-integrity audit
+  (truncated bodies, captured UI chrome, impossible-title citations; needs no oracle).
 - `tests/` — golden-fixture acceptance suite (`uv run pytest`).
 - `scripts/download.py` — gated download + SHA-256 verification.
 - `PRIORITIES.md` — authoritative product priorities and their measurement rules.

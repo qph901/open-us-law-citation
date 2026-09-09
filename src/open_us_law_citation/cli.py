@@ -37,6 +37,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         citation_parser_main(raw_args[1:])
         return 0
+    if raw_args and raw_args[0] == "text-integrity":
+        from .text_integrity import main as text_integrity_main
+
+        text_integrity_main(raw_args[1:])
+        return 0
     if raw_args and raw_args[0] == "cfr-assembly":
         from .cfr_assembly import main as cfr_assembly_main
 
@@ -58,7 +63,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         nargs="?",
         choices=(
             "ca-probe", "identity-manifest", "coverage-baseline", "citation-parser",
-            "in-body-detection", "cfr-assembly",
+            "in-body-detection", "cfr-assembly", "text-integrity",
         ),
         help="analysis command (append --help for command options)",
     )
