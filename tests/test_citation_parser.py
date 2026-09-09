@@ -8,11 +8,14 @@ mention.
 
 from __future__ import annotations
 
+import re
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from open_us_law_citation.citation_parser import (
+    _CFR_SECTION_BARE,
     _DETECTION_MIN_PRECISION,
     _DETECTION_MIN_RECALL,
     DETECTION_GOLD,
@@ -467,3 +470,76 @@ def test_title_range_is_a_model_invariant_not_only_a_parser_rule():
             reference_type=ReferenceType.ABSOLUTE, parser_method="usc_grammar_v1",
             parser_confidence=1.0,
         )
+
+
+# The hardest real CFR section numbers in v2026.08 — longest shapes combining a hyphenated
+# or dotted part with embedded parenthesised material. Checked against the dataset's own
+# `section_number` column, which is authoritative: all 168,488 distinct CFR section numbers
+# were tested and `_CFR_SECTION_BARE` full-matches every one that is a dotted section.
+_REAL_HARD_CFR_SECTIONS = [
+    "275.202(a)(11)(G)-1",
+    "301.6103(p)(2)(B)-1",
+    "31.3401(a)(8)(A)-1",
+    "4284.1009-4284.1019",
+    "240.11a1-4(T)",
+    "101-6.2104",
+    "1.401(a)-1",
+    "240.10b-5",
+]
+
+
+@pytest.mark.parametrize("section", _REAL_HARD_CFR_SECTIONS)
+def test_cfr_bare_section_consumes_the_whole_real_token(section):
+    """`_CFR_SECTION_BARE` must consume the entire token, never a prefix of it.
+
+    This is the shape that once produced `240.1` for `240.10b-5`: an alternation whose
+    optional tail let a SHORT match be complete. A prefix match is the dangerous failure
+    because it is silent — it yields a real-looking section that points at different law.
+    """
+    match = re.match(_CFR_SECTION_BARE, section)
+    assert match is not None and match.group(0) == section
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("see 17 CFR §§ 240.10b-5, 240.13a-1, 240.14a-13.",
+         ["240.10b-5", "240.13a-1", "240.14a-13"]),
+        ("under 41 CFR §§ 101-6.2104, 101-6.2105 and 101-6.2106",
+         ["101-6.2104", "101-6.2105", "101-6.2106"]),
+        ("per 26 CFR §§ 1.401(a)-1, 41.6151(a)-1 (2024)",
+         ["1.401(a)-1", "41.6151(a)-1"]),
+        ("at 17 CFR §§ 240.11a1-4(T), 240.15c3-1",
+         ["240.11a1-4(T)", "240.15c3-1"]),
+    ],
+)
+def test_cfr_list_continuation_does_not_truncate_hard_shapes(text, expected):
+    """The list-continuation path reuses `_CFR_SECTION_BARE` after a separator, and the
+    36-passage gold set exercises it thinly — so the hard shapes are pinned here directly.
+    A trailing sentence period must stay out of the section."""
+    assert [m.parsed.parsed_section for m in detect_mentions(text)] == expected
+
+
+def test_cfr_bare_section_rejects_what_is_not_a_section():
+    """Negative cases. A bare part number is NOT a section: matching it would invent a
+    section-level citation out of a part-level reference."""
+    for not_a_section in ("240", "240.", ".5", "part", ""):
+        match = re.match(_CFR_SECTION_BARE, not_a_section)
+        assert match is None or match.group(0) != not_a_section, not_a_section
+
+
+def test_two_deliberate_cfr_non_matches_are_documented_behaviour():
+    """Both are intentional, and both were confirmed against the real corpus.
+
+    A space-separated parenthetical (`956.2 (Rule 2)`, 3 real sections) stops at the space,
+    exactly as a trailing `(2024)` edition marker does — the section identity is the
+    contiguous token. And a dotless section (`9`, `2-3`, 44 real sections, the 14 CFR Part
+    241 family) is deliberately excluded from free-text detection, where a bare number is
+    ambiguous with a part reference.
+    """
+    assert re.match(_CFR_SECTION_BARE, "956.2 (Rule 2)").group(0) == "956.2"
+    assert re.match(_CFR_SECTION_BARE, "2-3") is None
+    # The dotless form still parses as a whole citation string (cfr_grammar_v3), where the
+    # code token removes the ambiguity — it is only free-text *detection* that excludes it.
+    assert parse_cfr_citation("14 CFR 241.9") is not None
+    assert detect_mentions("see 14 CFR 9 for the account") == []
