@@ -93,3 +93,40 @@ key as its own outcome. This is a count-level denominator check only — equal t
 would not prove the *right* sections are present (missing and unexpected can cancel);
 that requires the provision-level crosswalk against the pinned point-in-time bytes.
 
+
+## Addendum — how the crosswalk actually detects reserved (and where this table is wrong)
+
+The counts above come from the structure API's `reserved` flag. The crosswalk cannot use
+that flag: it parses the **full-title XML**, which is what gets checksum-pinned as the
+oracle. So `coverage_baseline._ecfr_provisions` detects reserved from the section's
+`<HEAD>` (`§ 1.8   [Reserved]`) — verified against the live API on 2026-09-08, there is
+**no `RESERVED` attribute** anywhere in the full-title XML.
+
+Validating head-detection against the API flag on four titles at the `2026-08-26` edition:
+
+| Title | API total | API reserved | XML sections | XML `[Reserved]` | agree |
+|---:|---:|---:|---:|---:|---|
+| 1 | 288 | 17 | 288 | 17 | yes |
+| 3 | 27 | 7 | 27 | 7 | yes |
+| 11 | 587 | 27 | 587 | 27 | yes |
+| 23 | 987 | 12 | 987 | **13** | **no** |
+
+The one disagreement is instructive, and it resolves **against the API**. `23 CFR 1270.5`
+is `<DIV8 N="1270.5" TYPE="SECTION"><HEAD>§ 1270.5   [Reserved].</HEAD></DIV8>` — an
+element with no body, byte-for-byte the same shape as sections the API *does* flag, except
+for a trailing period after `[Reserved]`. It is reserved; the API's flag says it is not.
+So the **6,985 above is a slight undercount** of genuinely reserved sections, and the
+`220,536` active count is correspondingly a slight overcount. The authoritative numbers
+will come from the pinned XML when the crosswalk runs; these remain the browse-level
+cross-check they were commissioned as.
+
+Two consequences already implemented in `coverage_baseline`:
+
+- Reserved is a distinct `StructuralStatus.RESERVED` stratum, **held out of `expected`**,
+  so every coverage rate is against sections that carry law. Scoring reserved sections
+  `missing` would have manufactured a ~3.1% phantom gap.
+- Classification follows the *official* source: a key the eCFR reserves stays `reserved`
+  even if the snapshot happens to carry a row there. Note also that a reserved element
+  frequently spans a **range** in one element (`N="102.104-102.109"` — all 7 of title 3's
+  reserved entries, 14 of title 1's), so its key is not a section number any dataset row
+  could ever match.

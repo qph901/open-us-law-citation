@@ -19,6 +19,8 @@ from open_us_law_citation.coverage_baseline import (
     TitleCurrency,
     baseline_manifest,
     build_baseline,
+    coverage_counts,
+    coverage_rates,
     inventory_from_xml,
     load_official_inventory,
     oracle_source_sha256,
@@ -145,6 +147,7 @@ def test_crosswalk_reports_zero_one_and_multiple_candidates_without_coercion():
         "expected": 5,
         "represented": 2,
         "missing": 1,
+        "reserved": 0,
         "stale": 0,
         "duplicate": 1,
         "ambiguous": 1,
@@ -351,3 +354,114 @@ def test_cli_refuses_to_build_from_an_unstaged_oracle(tmp_path: Path):
             ]
         )
     assert not (tmp_path / "must-not-exist.json").exists()
+
+
+def _reserved_official(section: str, *, title: str = "1") -> OfficialProvision:
+    return OfficialProvision.from_text(
+        key=ProvisionKey(FederalCorpus.CFR, title, section),
+        official_id=f"official-{title}-{section}",
+        source_url=f"https://official.example/title-{title}/section-{section}",
+        text=f"§ {section}   [Reserved]",
+        reserved=True,
+    )
+
+
+def test_ecfr_projection_marks_reserved_sections_including_the_trailing_period(
+    tmp_path: Path,
+):
+    """eCFR marks reserved ONLY in <HEAD>; there is no RESERVED attribute.
+
+    The trailing-period variant is real: at the 2026-08-26 edition, 23 CFR 1270.5 is an
+    empty `[Reserved].` placeholder that the eCFR *structure API* reports as NOT reserved.
+    The XML is right, so the head match must tolerate it. A reserved element also often
+    spans a whole range of numbers in one element.
+    """
+    source = tmp_path / "title-3.xml"
+    source.write_text(
+        """<ECFR TITLE="3"><DIV5 TYPE="PART" N="102">
+        <DIV8 TYPE="SECTION" N="102.1"><HEAD>§ 102.1 Purpose.</HEAD>
+        <P>This part governs...</P></DIV8>
+        <DIV8 TYPE="SECTION" N="102.104-102.109">
+        <HEAD>§§ 102.104-102.109   [Reserved]</HEAD></DIV8>
+        <DIV8 TYPE="SECTION" N="1270.5"><HEAD>§ 1270.5   [Reserved].</HEAD></DIV8>
+        </DIV5></ECFR>"""
+    )
+    inventory = inventory_from_xml(
+        source_path=source,
+        corpus=FederalCorpus.CFR,
+        oracle_edition="oracle:test:ecfr",
+        oracle_kind=OracleKind.ECFR,
+        edition_date="2026-08-26",
+        source_url="https://official.example/title-{title}.xml",
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        currency_basis="point-in-time eCFR fixture",
+    )
+    by_section = {p.key.section: p for p in inventory.provisions}
+    assert by_section["102.1"].reserved is False
+    assert by_section["102.104-102.109"].reserved is True   # range in one element
+    assert by_section["1270.5"].reserved is True            # trailing period
+
+
+def test_reserved_is_its_own_stratum_and_is_held_out_of_the_denominator():
+    """A reserved section is an empty official placeholder -- neither present nor absent
+    law -- so it must not be scored `missing` and must not sit in `expected`."""
+    inventory = OfficialInventory(
+        corpus=FederalCorpus.CFR,
+        oracle_edition="oracle:test:ecfr",
+        oracle_kind=OracleKind.ECFR,
+        edition_date="2026-08-26",
+        source_url="https://official.example/title-{title}.xml",
+        source_sha256="a" * 64,
+        title_currency=(TitleCurrency("1", "2026-08-26", "point-in-time eCFR fixture"),),
+        provisions=(
+            _official(FederalCorpus.CFR, "1.1", "present law"),
+            _official(FederalCorpus.CFR, "1.2", "absent law"),
+            _reserved_official("1.3-1.9"),
+        ),
+    )
+    dataset = _evidence()
+    baseline = build_baseline(
+        inventory=inventory,
+        inventory_sha256="b" * 64,
+        dataset=dataset,
+        candidates=[_candidate(FederalCorpus.CFR, "1.1", "present law", ordinal=1)],
+    )
+    by_section = {e.key.section: e for e in baseline.entries}
+    assert by_section["1.1"].structural_status == StructuralStatus.REPRESENTED
+    assert by_section["1.2"].structural_status == StructuralStatus.MISSING
+    assert by_section["1.3-1.9"].structural_status == StructuralStatus.RESERVED
+
+    counts = coverage_counts(baseline.entries)
+    # The reserved placeholder is NOT in the denominator and NOT counted missing.
+    assert counts["expected"] == 2
+    assert counts["reserved"] == 1
+    assert counts["missing"] == 1
+    # ... so coverage is 1/2, not 1/3.
+    assert coverage_rates(counts)["represented_percent"] == "50.0000"
+    # A reserved section has no operative text, so it enters no text bucket.
+    assert counts["exact_text"] + counts["mismatch_text"] + counts["unavailable_text"] == 2
+
+
+def test_reserved_stays_reserved_even_when_the_dataset_carries_a_row():
+    """Classification follows the *official* source: if it publishes no law at the key,
+    a dataset row there does not make it `represented`."""
+    inventory = OfficialInventory(
+        corpus=FederalCorpus.CFR,
+        oracle_edition="oracle:test:ecfr",
+        oracle_kind=OracleKind.ECFR,
+        edition_date="2026-08-26",
+        source_url="https://official.example/title-{title}.xml",
+        source_sha256="a" * 64,
+        title_currency=(TitleCurrency("1", "2026-08-26", "point-in-time eCFR fixture"),),
+        provisions=(_reserved_official("1.5"),),
+    )
+    baseline = build_baseline(
+        inventory=inventory,
+        inventory_sha256="b" * 64,
+        dataset=_evidence(),
+        candidates=[_candidate(FederalCorpus.CFR, "1.5", "stale text", ordinal=1)],
+    )
+    assert baseline.entries[0].structural_status == StructuralStatus.RESERVED
+    counts = coverage_counts(baseline.entries)
+    assert counts["expected"] == 0 and counts["reserved"] == 1
+    assert coverage_rates(counts)["represented_percent"] is None

@@ -241,3 +241,55 @@ def test_stage_refuses_existing_output_without_overwrite(tmp_path):
     out.mkdir(parents=True)
     with pytest.raises(SystemExit):
         st.stage(reg, _ECFR_ID, out, titles=[1], fetcher=_ecfr_fetcher())
+
+
+def test_http_fetch_requests_and_decodes_gzip(monkeypatch):
+    """The eCFR versioner API answers HTTP 406 to a request that does not permit
+    compression ("This endpoint requires response compression"), and urllib neither
+    offers nor decodes gzip by default -- so `http_fetch` must do both itself."""
+    import gzip
+    import urllib.request
+
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        headers = {"Content-Encoding": "gzip"}
+
+        def read(self):
+            return gzip.compress(b"<ECFR>payload</ECFR>")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def _fake_urlopen(request, timeout=None):
+        captured["headers"] = {k.casefold(): v for k, v in request.header_items()}
+        return _FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    body = st.http_fetch("https://www.ecfr.gov/api/versioner/v1/full/2026-08-26/title-3.xml")
+
+    assert "gzip" in str(captured["headers"].get("accept-encoding", "")).casefold()
+    assert body == b"<ECFR>payload</ECFR>"   # decompressed, not raw gzip
+
+
+def test_http_fetch_passes_through_an_uncompressed_response(monkeypatch):
+    """A server that ignores the header and answers uncompressed must still work."""
+    import urllib.request
+
+    class _PlainResponse:
+        headers: dict[str, str] = {}
+
+        def read(self):
+            return b"<ECFR>plain</ECFR>"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _PlainResponse())
+    assert st.http_fetch("https://www.ecfr.gov/x.xml") == b"<ECFR>plain</ECFR>"

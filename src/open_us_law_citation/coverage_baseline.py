@@ -45,6 +45,13 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SECTION_MARK_RE = re.compile(r"^\s*\N{SECTION SIGN}{1,2}\s*")
 _USLM_TITLE_RE = re.compile(r"(?:^|[^a-z])usc(?:ode)?[-_ ]*0*(\d+)", re.I)
 _ECFR_TITLE_RE = re.compile(r"title[-_ ]*0*(\d+)", re.I)
+# eCFR marks a reserved section ONLY in its <HEAD> ("§ 1.8   [Reserved]"). There is no
+# RESERVED attribute in the full-title XML -- verified against titles 1, 3, 11 and 23 at
+# the 2026-08-26 edition, where every one of the 64 [Reserved] sections is an element with
+# an empty body. The trailing-period variant ("[Reserved].") is real and must match: it is
+# the one case where the eCFR structure API's own `reserved` flag disagrees, and the XML is
+# right -- 23 CFR 1270.5 is an empty placeholder that the API reports as not reserved.
+_ECFR_RESERVED_RE = re.compile(r"\[\s*reserved\s*\]", re.I)
 
 
 class FederalCorpus(StrEnum):
@@ -55,6 +62,10 @@ class FederalCorpus(StrEnum):
 class StructuralStatus(StrEnum):
     REPRESENTED = "represented"
     MISSING = "missing"
+    # A section the official source publishes as an empty placeholder (`[Reserved]`).
+    # It is neither present law nor absent law, so it is its own stratum and is held out
+    # of the coverage denominator entirely -- scoring it `missing` would invent a gap.
+    RESERVED = "reserved"
     DUPLICATE = "duplicate"
     AMBIGUOUS = "ambiguous"
     UNEXPECTED = "unexpected"
@@ -162,6 +173,10 @@ class OfficialProvision:
     source_url: str
     raw_text_sha256: str | None
     normalized_text_sha256: str | None
+    # eCFR publishes reserved sections as empty `[Reserved]` placeholders, frequently over a
+    # *range* of numbers in a single element (`N="102.104-102.109"`), so a reserved key is
+    # often not a section number that could ever match a dataset row. See `_ECFR_RESERVED_RE`.
+    reserved: bool = False
 
     def __post_init__(self) -> None:
         if not self.official_id:
@@ -183,9 +198,10 @@ class OfficialProvision:
         official_id: str,
         source_url: str,
         text: str | None,
+        reserved: bool = False,
     ) -> OfficialProvision:
         raw_hash, normalized_hash = text_fingerprints(text)
-        return cls(key, official_id, source_url, raw_hash, normalized_hash)
+        return cls(key, official_id, source_url, raw_hash, normalized_hash, reserved)
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,6 +370,10 @@ def _structural_status(
 ) -> StructuralStatus:
     if official is None:
         return StructuralStatus.UNEXPECTED
+    if official.reserved:
+        # Reserved regardless of whether the snapshot happens to carry a row for the key:
+        # the official source publishes no law here, so there is nothing to be missing.
+        return StructuralStatus.RESERVED
     if not candidates:
         return StructuralStatus.MISSING
     if len(candidates) == 1:
@@ -459,6 +479,7 @@ def _empty_counts() -> dict[str, int]:
         "expected": 0,
         "represented": 0,
         "missing": 0,
+        "reserved": 0,
         "stale": 0,
         "duplicate": 0,
         "ambiguous": 0,
@@ -477,7 +498,12 @@ def _empty_counts() -> dict[str, int]:
 
 
 def _add_entry(counts: dict[str, int], entry: CrosswalkEntry) -> None:
-    if entry.official is not None:
+    # `expected` is the coverage DENOMINATOR, so it counts official sections that carry
+    # law: reserved placeholders are excluded and tallied in their own `reserved` bucket
+    # (via structural_status below). Including them would understate coverage by ~3.1% of
+    # the CFR -- 6,985 of 227,521 sections at the 2026-08-26 edition.
+    reserved = entry.official is not None and entry.official.reserved
+    if entry.official is not None and not reserved:
         counts["expected"] += 1
     counts[entry.structural_status.value] += 1
     if entry.currency_status == CurrencyStatus.STALE:
@@ -490,7 +516,8 @@ def _add_entry(counts: dict[str, int], entry: CrosswalkEntry) -> None:
         counts["pending_currency"] += 1
     else:
         counts["not_applicable_currency"] += 1
-    if entry.official is None:
+    if entry.official is None or reserved:
+        # A reserved section has no operative text, so it enters no text-agreement bucket.
         return
     if entry.text_agreement == TextAgreement.EXACT:
         counts["exact_text"] += 1
@@ -661,13 +688,20 @@ def render_markdown(baseline: CoverageBaseline, *, example_limit: int = 12) -> s
         "Currency and text agreement are separate dimensions; therefore a "
         "structurally represented provision can still be stale or text-pending.",
         "",
+        "`reserved` is a **separate stratum held out of `expected`**, so every rate below "
+        "is against sections that carry law. A reserved section is an empty official "
+        "placeholder, not absent law, and eCFR often publishes one element over a whole "
+        "*range* of numbers (`102.104-102.109`), which is not a key any dataset row could "
+        "match -- scoring those `missing` would manufacture a coverage gap that does not "
+        "exist.",
+        "",
         "## Totals",
         "",
-        "| expected | represented | missing | stale | duplicate | ambiguous | "
+        "| expected | represented | missing | reserved | stale | duplicate | ambiguous | "
         "unexpected | exact text | normalized text | mismatch | pending text |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         f"| {totals['expected']:,} | {totals['represented']:,} | "
-        f"{totals['missing']:,} | {totals['stale']:,} | "
+        f"{totals['missing']:,} | {totals['reserved']:,} | {totals['stale']:,} | "
         f"{totals['duplicate']:,} | {totals['ambiguous']:,} | "
         f"{totals['unexpected']:,} | {totals['exact_text']:,} | "
         f"{totals['normalized_text']:,} | {totals['mismatch_text']:,} | "
@@ -680,6 +714,9 @@ def render_markdown(baseline: CoverageBaseline, *, example_limit: int = 12) -> s
         f"exact text {rates['exact_text_percent']}%, and normalized text "
         f"{rates['normalized_text_percent']}%.",
         "",
+        "Reserved official sections held out of the denominator (empty `[Reserved]` "
+        f"placeholders): **{totals['reserved']:,}**.",
+        "",
         "Currency overlays: "
         f"aligned `{totals['aligned_currency']:,}`, stale `{totals['stale']:,}`, "
         f"ahead of oracle `{totals['ahead_of_oracle_currency']:,}`, pending "
@@ -688,9 +725,10 @@ def render_markdown(baseline: CoverageBaseline, *, example_limit: int = 12) -> s
         "",
         "## By title",
         "",
-        "| title | official cutoff | expected | represented | represented % | missing | stale | "
+        "| title | official cutoff | expected | represented | represented % | missing | "
+        "reserved | stale | "
         "duplicate | ambiguous | unexpected | exact | normalized | mismatch | pending |",
-        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for title in manifest["titles"]:
         counts = title["counts"]
@@ -698,7 +736,7 @@ def render_markdown(baseline: CoverageBaseline, *, example_limit: int = 12) -> s
             f"| {title['title']} | {title['official_legal_content_cutoff'] or 'pending'} | "
             f"{counts['expected']:,} | {counts['represented']:,} | "
             f"{title['rates']['represented_percent'] or 'n/a'} | "
-            f"{counts['missing']:,} | {counts['stale']:,} | "
+            f"{counts['missing']:,} | {counts['reserved']:,} | {counts['stale']:,} | "
             f"{counts['duplicate']:,} | {counts['ambiguous']:,} | "
             f"{counts['unexpected']:,} | {counts['exact_text']:,} | "
             f"{counts['normalized_text']:,} | {counts['mismatch_text']:,} | "
@@ -949,10 +987,12 @@ def _ecfr_provisions(
     for element in root.iter():
         if element.attrib.get("TYPE", "").casefold() != "section":
             continue
+        head = _direct_child(element, "head")
+        head_text = "".join(head.itertext()) if head is not None else ""
+        reserved = bool(_ECFR_RESERVED_RE.search(head_text))
         section = element.attrib.get("N") or element.attrib.get("n")
         if not section:
-            head = _direct_child(element, "head")
-            section = "".join(head.itertext()) if head is not None else ""
+            section = head_text
         match = re.search(r"\N{SECTION SIGN}{1,2}\s*([^\s—–]+)", section)
         if match:
             section = match.group(1)
@@ -965,6 +1005,7 @@ def _ecfr_provisions(
             official_id=official_id,
             source_url=source_url.format(title=title),
             text=_flatten_xml_text(element),
+            reserved=reserved,
         )
 
 

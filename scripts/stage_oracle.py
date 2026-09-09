@@ -36,6 +36,7 @@ The operator runs this (it performs the official-government downloads); a fake
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import shutil
 import urllib.request
@@ -55,12 +56,25 @@ _USER_AGENT = "open-us-law-citation/COV-1A oracle-stager"
 
 
 def http_fetch(url: str, *, timeout: float = 120.0) -> bytes:
-    """Fetch one https URL to bytes. https-only, matching the registry invariant."""
+    """Fetch one https URL to bytes. https-only, matching the registry invariant.
+
+    ``Accept-Encoding: gzip`` is **required**, not an optimisation: the eCFR versioner API
+    answers a request without it with ``HTTP 406`` and the body ``"This endpoint requires
+    response compression. Send an Accept-Encoding header that permits compression."``
+    (reproduced against the live API on 2026-09-08). urllib neither offers compression nor
+    decodes it by default, so both halves are done here.
+    """
     if not url.startswith("https://"):
         raise ValueError(f"refusing to fetch non-https URL: {url!r}")
-    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    request = urllib.request.Request(
+        url, headers={"User-Agent": _USER_AGENT, "Accept-Encoding": "gzip"}
+    )
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 (https-only)
-        return response.read()
+        payload = response.read()
+        encoding = (response.headers.get("Content-Encoding") or "").strip().casefold()
+    if encoding == "gzip":
+        payload = gzip.decompress(payload)
+    return payload
 
 
 def parse_title_spec(spec: str) -> list[int]:

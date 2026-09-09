@@ -53,7 +53,7 @@ from typing import Sequence
 
 import duckdb
 
-from .citation_parser import TITLE_MAX, detect_mentions, title_in_range
+from .citation_parser import detect_mentions, title_in_range
 from .coverage_baseline import FederalCorpus
 
 # A superset (RE2) of everything the detector can match: an explicit code token. A body
