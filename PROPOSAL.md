@@ -573,6 +573,23 @@ Bounded (a deterministic sample, ~a few hundred groups — *not* a milestone). D
 **Metrics:** continuation-classification precision & recall; duplicate-classification precision; exact and normalized assembled-text match; ambiguous-group rate; **partial-law rate**; and — driving decision B — the **abstention rate on multi-row CFR groups**.
 **Hard failure (zero tolerance):** an assembly marked `complete` whose text is missing operative provision text.
 
+**CFR-A1 — snapshot-internal half REPORTED.** `reports/CFR-A1_commissioning_frame.md`,
+built by `open_us_law_citation.cfr_assembly`. All 1,083 multi-row `CFR_*` groups (2,236
+rows, 0.5% of 218,865 distinct sections) classified by the physical relation between rows:
+**232 duplicate-only** (21.4%), **376 variant capture** (34.7%), **31 candidate segmented**
+(2.9%), **444 undetermined** (41.0%). Load-bearing finding: only **34 groups (3.1%)** show
+any mid-thought continuation seam, while **365** contain a pair where one row's text sits
+wholly inside another's — so **concatenation is the wrong primitive**, and the dominant
+real phenomenon is variant capture (an eCFR amendment banner or a truncated capture), where
+concatenating would emit operative text twice under a whole-section citation. Same shape of
+negative result M0.5A.1 reached for `FR_*`, reached independently. Decision B is not
+single-valued: abstention is **78.6%** if only byte-identical groups resolve (above the 50%
+trigger) but **44.9%** if superset selection is allowed where one row wholly contains
+another (below it) — superset selection is provably never partial *relative to the group's
+members*, but proving completeness against the official section still needs the pinned
+eCFR. **The validation half remains pending those bytes**; continuation precision/recall,
+assembled-text match, and partial-law rate are all oracle-dependent and unmeasured.
+
 ### CFR-A2 — `cfr_source_assembly_v1` producer + eligibility invariant
 Pure **snapshot-internal** assembly (continuation signal + physical row order + dedup); anatomy validates the candidate (one coherent operative structure ⇒ corroborate; N self-contained structures ⇒ reject). When internal evidence is insufficient: `assembly_status = ambiguous`, and **do not concatenate**.
 **Eligibility invariant:** a CFR section is returned as complete authority only if it is a proven single-record section **or** `assembly_status = complete`. Otherwise abstain or mark evidence incomplete (return `source_url`, not half a section). **Returning half a regulation under the whole-section citation is unacceptable.**

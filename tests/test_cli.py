@@ -11,6 +11,7 @@ def test_cli_without_a_subcommand_prints_useful_help(capsys):
     assert "coverage-baseline" in output
     assert "citation-parser" in output
     assert "in-body-detection" in output
+    assert "cfr-assembly" in output
     assert "Hello" not in output
 
 

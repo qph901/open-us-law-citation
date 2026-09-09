@@ -224,6 +224,8 @@ The recon harness accepts any file glob, so it can be pointed at the full
 - `src/open_us_law_citation/in_body_detection.py` — M2 corpus-scale in-body detection
   (DuckDB-streamed run of the detector over the whole `text` column + cross-ref agreement
   + an impossible-title precision tripwire).
+- `src/open_us_law_citation/cfr_assembly.py` — CFR-A1 commissioning frame
+  (classifies every multi-row `CFR_*` group from the snapshot alone; emits no assembly).
 - `tests/` — golden-fixture acceptance suite (`uv run pytest`).
 - `scripts/download.py` — gated download + SHA-256 verification.
 - `PRIORITIES.md` — authoritative product priorities and their measurement rules.
