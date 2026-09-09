@@ -431,6 +431,13 @@ _NOT_A_NEW_CITATION = r"(?!\s*(?:U\.?\s?S\.?\s?C|C\.?\s?F\.?\s?R))"
 _USC_SECTION_BARE = r"\d+[A-Za-z]*(?:_\d+)?(?:\([0-9A-Za-z]{1,4}\))*"
 _CFR_SECTION_BARE = r"\d+[A-Za-z]?(?:-\d+[A-Za-z]?)*\.[0-9A-Za-z](?:[0-9A-Za-z().\-]*[0-9A-Za-z)])?"
 _USC_LIST_TAIL = re.compile(rf"{_LIST_SEP}(?P<section>{_USC_SECTION_BARE}){_NOT_A_NEW_CITATION}")
+# A USC list member carries its subsection inline (``§§ 154(i), 4(i)``). Split it back out so a
+# list member is identical to the same citation written as a primary (which yields section
+# ``4`` + subsection ``(i)``) — otherwise one provision produces two different edges. CFR is
+# deliberately NOT split: there, parenthesised material is *inside* the section identity.
+_USC_LIST_SPLIT = re.compile(
+    r"^(?P<section>\d+[A-Za-z]*(?:_\d+)?)(?P<subsection>(?:\([0-9A-Za-z]{1,4}\))*)$"
+)
 _CFR_LIST_TAIL = re.compile(rf"{_LIST_SEP}(?P<section>{_CFR_SECTION_BARE}){_NOT_A_NEW_CITATION}")
 _LIST_TAILS = {FederalCorpus.USC: _USC_LIST_TAIL, FederalCorpus.CFR: _CFR_LIST_TAIL}
 
@@ -472,14 +479,21 @@ def detect_mentions(
             pos = m.end()
             while (tm := _LIST_TAILS[corpus].match(text, pos)) is not None:
                 section = tm.group("section")
+                subsection: str | None = None
+                if corpus == FederalCorpus.USC:
+                    split = _USC_LIST_SPLIT.match(section)
+                    if split is not None:
+                        section = split.group("section")
+                        subsection = split.group("subsection") or None
                 part = section.split(".", 1)[0] if corpus == FederalCorpus.CFR else None
                 _emit(
                     ParsedCitation(
                         parsed_corpus=corpus, parsed_title=title, parsed_section=section,
-                        parsed_part=part, reference_type=ReferenceType.ABSOLUTE,
+                        parsed_part=part, parsed_subsection=subsection,
+                        reference_type=ReferenceType.ABSOLUTE,
                         parser_method=method, parser_confidence=_ABSOLUTE_CONFIDENCE,
                     ),
-                    section, tm.start("section"), tm.end("section"),
+                    tm.group("section"), tm.start("section"), tm.end("section"),
                 )
                 pos = tm.end()
 

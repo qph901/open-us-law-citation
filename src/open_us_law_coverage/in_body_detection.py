@@ -15,48 +15,52 @@ miss. And per PROPOSAL.md, ``cross_references_*`` field presence "is not a recal
 it is an independent comparison signal, never a gold denominator.
 
 OOM invariant (CLAUDE.md): the federal-regulations ``text`` column is ~11 GB with a single
-~3.3 GB row-group, so this scans **row-group-at-a-time** with the pool released between
-groups (peak ≈ one row-group, like ``recon.py``), and a vectorised Arrow pre-filter pulls
-only bodies that contain an explicit code token into Python — bare-reference bodies are
-skipped by construction (they carry no ``U.S.C.``/``C.F.R.`` token), which is exactly the
-population the detector abstains on.
+~3.3 GB row-group. The pyarrow ``read_row_group`` pattern that ``recon.py`` uses materialises
+that whole row-group and **SIGKILLs a 14 GB box** on this file (measured: exit 137). Per the
+CLAUDE.md corollary, all ``text`` work here therefore runs in **DuckDB** under a hard
+``--memory-limit`` with disk spill to ``--temp-dir``: it streams the column in vectors, never
+holding a row-group.
+
+Two things keep the streamed footprint small. The coarse code-token pre-filter is **pushed
+into SQL** (``regexp_matches``), and a non-candidate body is projected to ``NULL`` — so bodies
+that cannot contain an explicit citation are never returned to Python at all, and the peak is
+one record batch of *candidate* bodies (``--rows-per-batch``), not one row-group. Skipping
+them is not a shortcut: a body with no code token is precisely the bare/relative population
+the explicit detector abstains on.
+
+Determinism: every reported number is an order-independent aggregate, and the example sample
+is the lexicographically smallest N edges rather than the first N encountered — so the report
+is byte-stable under any scan order, thread count, or batch size.
 
 Regenerate::
 
     uv run python -m open_us_law_coverage.in_body_detection \\
         data/v2026.08_full/us_federal_statutes.parquet \\
         data/v2026.08_full/us_federal_regulations.parquet \\
-        --snapshot v2026.08 --out reports/M2_in_body_detection.md
+        --snapshot v2026.08 --out reports/M2_in_body_detection.md \\
+        --memory-limit 2GB --temp-dir /path/to/scratch/ddspill
 """
 
 from __future__ import annotations
 
 import argparse
 import glob as globlib
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
-import pyarrow as pa
-import pyarrow.compute as pc
-import pyarrow.parquet as pq
+import duckdb
 
 from .citation_parser import detect_mentions
 from .coverage_baseline import FederalCorpus
 
-_COLUMNS = [
-    "text",
-    "act_id",
-    "title_number",
-    "cross_references_usc",
-    "cross_references_cfr",
-]
-
 # A superset (RE2) of everything the detector can match: an explicit code token. A body
 # that lacks all of these cannot contain an explicit citation, so it is skipped before any
 # Python regex runs — and that skipped population is precisely the bare/relative references
-# the explicit detector abstains on.
+# the explicit detector abstains on. DuckDB's ``regexp_matches`` is RE2, so this is the same
+# dialect the pyarrow ``match_substring_regex`` pre-filter used.
 _CANDIDATE_RE = r"U\.?\s?S\.?\s?C|C\.?\s?F\.?\s?R|United States Code|Code of Federal Regulations"
 
 _Cite = tuple[str, str]  # (title, section)
@@ -122,63 +126,181 @@ class InBodyStats:
     cfr_both: int = 0
     cfr_detector_only: int = 0
     cfr_dataset_only: int = 0
+    # Precision tripwire: a detected edge whose title cannot exist (USC has titles 1-54,
+    # CFR 1-50). These are false positives by construction — see _PRECISION_SECTION.
+    usc_out_of_range: int = 0
+    cfr_out_of_range: int = 0
+    out_of_range_ex: set[tuple[str, str, str]] = field(default_factory=set)
     # Small sorted samples of detector-only edges (explicit cites the dataset did not list).
     usc_detector_only_ex: set[tuple[str, str, str]] = field(default_factory=set)
 
 
 _EXAMPLE_CAP = 40
 
+# The US Code has titles 1-54; the CFR has titles 1-50. A detected citation outside its
+# code's title range cannot name real law, so it is a false positive by construction — a
+# denominator-free precision check that needs no labelling.
+_TITLE_RANGE = {FederalCorpus.USC: 54, FederalCorpus.CFR: 50}
 
-def scan_file(path: str | Path) -> InBodyStats:
+
+def _in_range(corpus: FederalCorpus, title: str) -> bool:
+    return title.isdigit() and 1 <= int(title) <= _TITLE_RANGE[corpus]
+
+
+_PRECISION_SECTION = """\
+## Precision limits found at corpus scale
+
+The Stage-A gold set (36 hand-labelled passages) measures precision 1.000, but it is small
+by construction. Running the same detector over every federal body surfaced two defect
+classes it did not cover. Both are reported here rather than quietly absorbed.
+
+**1. List members folded their subsection into the section — fixed.** `47 U.S.C. §§ 154(i),
+4(i)` emitted the continuation items as section `4(i)` while the *primary* form of the same
+citation splits to section `4` + subsection `(i)`, so one provision produced two different
+edges. `_USC_LIST_SPLIT` now splits list members exactly like primaries (CFR is deliberately
+not split — there parenthesised material is part of the section identity). Regression-tested;
+the numbers above are post-fix.
+
+**2. A greedy title can absorb a preceding number — open.** `Pub. L. 95-147 U.S.C. 19`
+parses as title **147**, because `(?P<title>\\d+)` takes every adjacent digit. The counts
+below are the measurement, not an estimate: a title outside its code's range (USC 1-54,
+CFR 1-50) cannot name real law, so every one is a false positive with no labelling needed.
+This is left open deliberately — constraining the title to a valid range is a grammar-policy
+change to `citation_parser`, outside the scope of this scan.
+
+A third, smaller observation is **not** a detector defect: two `us_federal_statutes` bodies
+contain `\\n0 U.S.C. 6311` / `\\n0 U.S.C. 4501`, where the snapshot's own text lost the
+line-leading `(2` / `[5`. The detector faithfully reports the bytes it was given; repairing
+them would mean guessing the missing digit, which the project's abstain-rather-than-guess
+rule forbids.
+"""
+
+
+def _sample_key(edge: tuple[str, str, str]) -> str:
+    """Deterministic pseudo-random order for example sampling (stable across runs)."""
+    return hashlib.sha256("\x1f".join(edge).encode("utf-8")).hexdigest()
+
+
+def _display_key(edge: tuple[str, str, str]) -> tuple[str, int, str, str]:
+    """Human ordering for the rendered sample: numeric title, then section."""
+    _, title, section = edge
+    return (edge[0], int(title) if title.isdigit() else 1 << 30, title, section)
+
+# Only the coarse-filtered ``body`` is expensive; the other three columns are tiny. A
+# non-candidate body is projected to NULL, so it costs nothing to carry the row (we still
+# need its cross-references for the dataset-only count).
+_SCAN_SQL = """
+SELECT title_number,
+       cross_references_usc,
+       cross_references_cfr,
+       CASE WHEN text IS NOT NULL AND regexp_matches(text, ?) THEN text END AS body
+FROM read_parquet(?)
+"""
+
+
+def _connect(memory_limit: str, temp_dir: Path | None) -> duckdb.DuckDBPyConnection:
+    con = duckdb.connect()
+    con.execute(f"SET memory_limit='{memory_limit}'")
+    if temp_dir is not None:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        con.execute(f"SET temp_directory='{temp_dir.as_posix()}'")
+    # Single-threaded, and insertion order NOT preserved: on the regulations file the
+    # order-preserving buffer holds ~1.5 GiB of decoded bodies and the scan then fails to
+    # allocate a 512 MiB string vector. Report stability does not depend on scan order —
+    # every reported number is an order-independent aggregate and the example sample is the
+    # lexicographically smallest N edges (see ``_accumulate``), not the first N seen.
+    con.execute("SET threads=1")
+    con.execute("SET preserve_insertion_order=false")
+    return con
+
+
+def _accumulate(stats: InBodyStats, body: str | None, title: int | None,
+                raw_usc: str | None, raw_cfr: str | None) -> None:
+    """Fold one row into ``stats``. ``body`` is None for a non-candidate row."""
+    stats.rows_total += 1
+    ds_usc = _parse_xref_usc(raw_usc, title)
+    ds_cfr = _parse_xref_cfr(raw_cfr, title)
+
+    det_usc: set[_Cite] = set()
+    det_cfr: set[_Cite] = set()
+    if body is not None:
+        stats.rows_candidate += 1
+        mentions = detect_mentions(body)
+        if mentions:
+            stats.rows_with_detection += 1
+        for m in mentions:
+            key = (m.parsed.parsed_title, m.parsed.parsed_section)
+            if m.parsed.parsed_corpus == FederalCorpus.USC:
+                det_usc.add(key)
+                stats.usc_mentions += 1
+            else:
+                det_cfr.add(key)
+                stats.cfr_mentions += 1
+
+    for corpus, edges, attr in (
+        (FederalCorpus.USC, det_usc, "usc"), (FederalCorpus.CFR, det_cfr, "cfr")
+    ):
+        bad = {(t, sec) for t, sec in edges if not _in_range(corpus, t)}
+        if bad:
+            setattr(stats, f"{attr}_out_of_range",
+                    getattr(stats, f"{attr}_out_of_range") + len(bad))
+            stats.out_of_range_ex.update((str(corpus), t, sec) for t, sec in bad)
+            if len(stats.out_of_range_ex) > _EXAMPLE_CAP:
+                stats.out_of_range_ex = set(
+                    sorted(stats.out_of_range_ex, key=_sample_key)[:_EXAMPLE_CAP]
+                )
+
+    stats.usc_both += len(det_usc & ds_usc)
+    stats.usc_detector_only += len(det_usc - ds_usc)
+    stats.usc_dataset_only += len(ds_usc - det_usc)
+    stats.cfr_both += len(det_cfr & ds_cfr)
+    stats.cfr_detector_only += len(det_cfr - ds_cfr)
+    stats.cfr_dataset_only += len(ds_cfr - det_cfr)
+    # Order-independent sample: keep the _EXAMPLE_CAP edges with the smallest digest. This
+    # is byte-stable under any scan order / threading / batch size (unlike "first N seen")
+    # *and* unbiased (unlike "lexicographically smallest N", which only ever shows title 1).
+    new_edges = det_usc - ds_usc
+    if new_edges:
+        stats.usc_detector_only_ex.update(("usc", t, sec) for t, sec in new_edges)
+        if len(stats.usc_detector_only_ex) > _EXAMPLE_CAP:
+            stats.usc_detector_only_ex = set(
+                sorted(stats.usc_detector_only_ex, key=_sample_key)[:_EXAMPLE_CAP]
+            )
+
+
+def scan_file(
+    path: str | Path,
+    *,
+    memory_limit: str = "2GB",
+    temp_dir: Path | None = None,
+    rows_per_batch: int = 512,
+) -> InBodyStats:
+    """Stream one corpus file through the detector under a hard DuckDB memory limit.
+
+    Never materialises a Parquet row-group: DuckDB streams ``text`` in vectors and this
+    pulls one Arrow record batch of *candidate* bodies at a time. Pass ``temp_dir`` for any
+    large file — without a spill directory DuckDB cannot honour ``memory_limit`` on a
+    query that needs to spill (the CLI always passes one).
+    """
     path = Path(path)
     stats = InBodyStats(corpus_file=path.name.replace(".parquet", ""))
-    pf = pq.ParquetFile(path)
-    pool = pa.default_memory_pool()
-
-    for g in range(pf.metadata.num_row_groups):
-        tbl = pf.read_row_group(g, columns=_COLUMNS)
-        text_col = tbl.column("text")
-        # Coarse filter: valid text that contains an explicit code token. Nulls -> False.
-        mask = pc.and_(
-            pc.is_valid(text_col), pc.match_substring_regex(text_col, _CANDIDATE_RE)
-        ).to_pylist()
-        titles = tbl.column("title_number").to_pylist()
-        xusc = tbl.column("cross_references_usc").to_pylist()
-        xcfr = tbl.column("cross_references_cfr").to_pylist()
-
-        for i in range(tbl.num_rows):
-            stats.rows_total += 1
-            ds_usc = _parse_xref_usc(xusc[i], titles[i])
-            ds_cfr = _parse_xref_cfr(xcfr[i], titles[i])
-
-            det_usc: set[_Cite] = set()
-            det_cfr: set[_Cite] = set()
-            if mask[i]:
-                stats.rows_candidate += 1
-                mentions = detect_mentions(text_col[i].as_py())  # one body only
-                if mentions:
-                    stats.rows_with_detection += 1
-                for m in mentions:
-                    key = (m.parsed.parsed_title, m.parsed.parsed_section)
-                    if m.parsed.parsed_corpus == FederalCorpus.USC:
-                        det_usc.add(key)
-                        stats.usc_mentions += 1
-                    else:
-                        det_cfr.add(key)
-                        stats.cfr_mentions += 1
-
-            stats.usc_both += len(det_usc & ds_usc)
-            stats.usc_detector_only += len(det_usc - ds_usc)
-            stats.usc_dataset_only += len(ds_usc - det_usc)
-            stats.cfr_both += len(det_cfr & ds_cfr)
-            stats.cfr_detector_only += len(det_cfr - ds_cfr)
-            stats.cfr_dataset_only += len(ds_cfr - det_cfr)
-            if len(stats.usc_detector_only_ex) < _EXAMPLE_CAP:
-                for t, s in sorted(det_usc - ds_usc):
-                    stats.usc_detector_only_ex.add(("usc", t, s))
-
-        del tbl, text_col
-        pool.release_unused()
+    con = _connect(memory_limit, temp_dir)
+    try:
+        reader = con.execute(
+            _SCAN_SQL, [_CANDIDATE_RE, path.as_posix()]
+        ).to_arrow_reader(rows_per_batch)
+        for batch in reader:
+            titles = batch.column("title_number").to_pylist()
+            xusc = batch.column("cross_references_usc").to_pylist()
+            xcfr = batch.column("cross_references_cfr").to_pylist()
+            bodies = batch.column("body")
+            for i in range(batch.num_rows):
+                # Pull the (potentially large) body only for candidate rows.
+                body = bodies[i].as_py() if bodies[i].is_valid else None
+                _accumulate(stats, body, titles[i], xusc[i], xcfr[i])
+            del batch, bodies
+    finally:
+        con.close()
     return stats
 
 
@@ -192,9 +314,11 @@ def render_report(stats_list: list[InBodyStats], snapshot: str) -> str:
     A("# M2 corpus-scale in-body citation detection")
     A("")
     A(f"Snapshot: `{snapshot}`. The Stage-A exact-citation detector (`detect_mentions`) run")
-    A("over **every row body** in each file, row-group-bounded (never materialising the 11 GB")
-    A("regulations `text` column). A vectorised Arrow pre-filter Python-scans only bodies that")
-    A("carry an explicit code token; the rest cannot contain an explicit citation.")
+    A("over **every row body** in each file. The scan streams through DuckDB under a hard")
+    A("memory limit with disk spill, so the 11 GB regulations `text` column is never")
+    A("materialised a row-group at a time (which SIGKILLs a 14 GB box). The coarse code-token")
+    A("pre-filter is pushed into SQL: only bodies carrying an explicit code token are returned")
+    A("to Python at all; the rest cannot contain an explicit citation.")
     A("")
     A("**This is the M2/M4 boundary, not a recall gate.** M2 detects *explicit* citations; the")
     A("dataset's `cross_references_*` are dominated by **bare, same-title** in-body references")
@@ -225,7 +349,29 @@ def render_report(stats_list: list[InBodyStats], snapshot: str) -> str:
         A(f"| {st.corpus_file} | CFR | {st.cfr_both:,} | {st.cfr_detector_only:,} "
           f"| {st.cfr_dataset_only:,} |")
     A("")
-    all_ex = sorted({e for st in stats_list for e in st.usc_detector_only_ex})[:20]
+    A("## Impossible-title detections (precision tripwire)")
+    A("")
+    A("Distinct detected edges whose title is outside its code's range — false positives by")
+    A("construction, needing no labelled set. See the section below for the cause.")
+    A("")
+    A("| File | USC out-of-range | CFR out-of-range |")
+    A("|---|---:|---:|")
+    for st in stats_list:
+        A(f"| {st.corpus_file} | {st.usc_out_of_range:,} | {st.cfr_out_of_range:,} |")
+    A("")
+    bad_ex = sorted(
+        sorted({e for st in stats_list for e in st.out_of_range_ex}, key=_sample_key)[:10],
+        key=_display_key,
+    )
+    if bad_ex:
+        A("Examples:")
+        A("")
+        for corpus, t, sec in bad_ex:
+            A(f"- `{t} {'U.S.C.' if corpus == 'usc' else 'C.F.R.'} § {sec}`")
+        A("")
+    A(_PRECISION_SECTION)
+    pooled = {e for st in stats_list for e in st.usc_detector_only_ex}
+    all_ex = sorted(sorted(pooled, key=_sample_key)[:20], key=_display_key)
     if all_ex:
         A("## Detector-only USC edges (sample) — explicit cross-title cites in bodies")
         A("")
@@ -238,15 +384,31 @@ def render_report(stats_list: list[InBodyStats], snapshot: str) -> str:
 def main(argv: Sequence[str] | None = None) -> None:
     ap = argparse.ArgumentParser(
         description="M2 corpus-scale in-body detection — run the exact-citation detector over "
-        "the whole text column (row-group-bounded) and compare with cross_references."
+        "the whole text column (DuckDB-streamed) and compare with cross_references."
     )
     ap.add_argument("paths", nargs="+", help="Parquet file(s) or glob(s)")
     ap.add_argument("--snapshot", required=True, help="snapshot version, e.g. v2026.08")
     ap.add_argument("--out", help="write the Markdown report here (else stdout)")
+    ap.add_argument("--memory-limit", default="2GB",
+                    help="DuckDB hard memory limit (spills to --temp-dir beyond this).")
+    ap.add_argument("--temp-dir", type=Path, default=Path(".duckdb_spill"),
+                    help="scratch directory for DuckDB spill files.")
+    ap.add_argument("--rows-per-batch", type=int, default=512,
+                    help="rows per streamed Arrow batch; lower it if bodies are very large.")
     args = ap.parse_args(argv)
 
     files = sorted({Path(p) for pat in args.paths for p in globlib.glob(pat)})
-    stats_list = [scan_file(f) for f in files]
+    stats_list = []
+    for f in files:
+        print(f"scanning {f.name} ...", flush=True)
+        stats_list.append(
+            scan_file(
+                f,
+                memory_limit=args.memory_limit,
+                temp_dir=args.temp_dir,
+                rows_per_batch=args.rows_per_batch,
+            )
+        )
     report = render_report(stats_list, args.snapshot)
     if args.out:
         Path(args.out).write_text(report)

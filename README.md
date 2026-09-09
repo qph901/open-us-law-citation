@@ -202,7 +202,8 @@ The recon harness accepts any file glob, so it can be pointed at the full
 - `src/open_us_law_coverage/citation_parser.py` — M2 federal exact-citation grammar
   (USC/CFR → `ParsedCitation` / `ReferenceMention`) + parse self-check + Stage-A detection.
 - `src/open_us_law_coverage/in_body_detection.py` — M2 corpus-scale in-body detection
-  (row-group-bounded run of the detector over the whole `text` column + cross-ref agreement).
+  (DuckDB-streamed run of the detector over the whole `text` column + cross-ref agreement
+  + an impossible-title precision tripwire).
 - `tests/` — golden-fixture acceptance suite (`uv run pytest`).
 - `scripts/download.py` — gated download + SHA-256 verification.
 - `PRIORITIES.md` — authoritative product priorities and their measurement rules.

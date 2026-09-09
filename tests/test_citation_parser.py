@@ -408,3 +408,28 @@ def test_report_is_stable_under_shuffled_input(tmp_path):
     r2 = render_report([("fx", analyze_file(a))], "v2026.08")
     assert r1 == r2
     assert "M2 citation-parser self-check" in r1
+
+
+def test_list_member_subsection_matches_the_primary_form():
+    """A list member must yield the same components as the same citation written primary.
+
+    Found at corpus scale: ``§§ 154(i), 4(i)`` folded ``(i)`` into the *section* for the
+    continuation items while the primary split it into ``parsed_subsection`` — so one
+    provision produced two different edges (``4`` vs ``4(i)``).
+    """
+    mentions = detect_mentions("under 47 U.S.C. §§ 154(i), 4(i), and 303(r)")
+    assert [(m.parsed.parsed_section, m.parsed.parsed_subsection) for m in mentions] == [
+        ("154", "(i)"), ("4", "(i)"), ("303", "(r)"),
+    ]
+    # The primary form of the same member agrees.
+    solo = detect_mentions("47 U.S.C. 4(i)")[0].parsed
+    assert (solo.parsed_section, solo.parsed_subsection) == ("4", "(i)")
+    # The raw span still quotes the text verbatim, subsection included.
+    assert mentions[1].raw_reference_text == "4(i)"
+
+
+def test_cfr_list_member_keeps_parenthesised_material_in_the_section():
+    """CFR is the deliberate opposite: the dataset stores parens *inside* section_number."""
+    mentions = detect_mentions("see 17 C.F.R. §§ 240.10b-5, 240.13a-1")
+    assert [m.parsed.parsed_section for m in mentions] == ["240.10b-5", "240.13a-1"]
+    assert all(m.parsed.parsed_subsection is None for m in mentions)

@@ -96,3 +96,31 @@ def test_report_is_stable(tmp_path):
     r2 = render_report([st], "v2026.08")
     assert r1 == r2
     assert "M2/M4 boundary" in r1
+
+
+def test_out_of_range_title_is_counted_as_a_precision_tripwire(tmp_path):
+    """A title outside its code's range (USC 1-54) cannot name real law, so the scan counts
+    it without needing a labelled set. `Pub. L. 95-147 U.S.C. 19` parses title 147."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    path = tmp_path / "oor.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "text": pa.array(
+                    ["Authority: Pub. L. 95-147 U.S.C. 19.", "Valid: 42 U.S.C. § 1983."],
+                    pa.string(),
+                ),
+                "act_id": pa.array(["USC_T1_S1", "USC_T1_S2"], pa.string()),
+                "title_number": pa.array([1, 1], pa.int64()),
+                "cross_references_usc": pa.array(["[]", "[]"], pa.string()),
+                "cross_references_cfr": pa.array(["[]", "[]"], pa.string()),
+            }
+        ),
+        path,
+    )
+    st = scan_file(path)
+    assert st.usc_out_of_range == 1
+    assert ("usc", "147", "19") in st.out_of_range_ex
+    assert "Precision limits found at corpus scale" in render_report([st], "v2026.08")
