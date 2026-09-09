@@ -34,7 +34,21 @@ from pathlib import Path
 import polars as pl
 
 # Successor pointer in a renumbered/transferred body, e.g. "Renumbered §321".
-SUCCESSOR_RE = re.compile(r"(Renumbered|Transferred|Recodified)\s+§+\s*([0-9A-Za-z.\-]+)", re.I)
+#
+# EXTRACTS the successor id, and runs only over rows already filtered to the three move
+# statuses -- so its verb list is deliberately NARROWER than `recon.SUCCESSOR_POINTER_RE`,
+# which answers a presence question across every lineage status. These verbs are a strict
+# subset of recon's; `tests/test_successor_patterns.py` pins that so the two cannot drift.
+#
+# The id must start and end alphanumeric so sentence punctuation is not captured:
+# "Renumbered §321." must yield "321", not "321." -- a successor id with a trailing period
+# resolves to nothing. Latent at v2026.08 (0 of 393 real extractions were affected, since
+# the snapshot's format is bracket-terminated) but wrong, and cheap to close.
+SUCCESSOR_RE = re.compile(
+    r"(Renumbered|Transferred|Recodified)\s+§+\s*"
+    r"([0-9A-Za-z](?:[0-9A-Za-z.\-]*[0-9A-Za-z])?)",
+    re.I,
+)
 
 # The OLRC editorial/historical apparatus is appended to the operative text under
 # headers like these. Splitting on the first one isolates the operative prefix.

@@ -57,8 +57,18 @@ LINEAGE_STATUSES = {"renumbered", "transferred", "recodified", "superseded", "om
 
 # Inline successor/disposition pointer in the section body, e.g.
 # "[§2010. Renumbered §321]" or "[§10542. Repealed. Pub. L. 114-92 ...]".
+#
+# This asks a PRESENCE question -- "does this body carry a disposition pointer at all?" --
+# and is only ever used as a boolean, so its verb list is deliberately WIDER than
+# `snapshot_diff.SUCCESSOR_RE`, which EXTRACTS a successor id from rows already filtered to
+# the three move statuses. The narrow set is a strict subset of this one;
+# `tests/test_successor_patterns.py` pins that relationship so the two cannot drift.
+#
+# The id must start and end alphanumeric so sentence punctuation is not captured:
+# "Renumbered §321." must yield "321", not "321.".
 SUCCESSOR_POINTER_RE = re.compile(
-    r"(Renumbered|Transferred|Omitted|Repealed|Recodified|See)\s+§+\s*([0-9A-Za-z.\-]+)",
+    r"(Renumbered|Transferred|Omitted|Repealed|Recodified|See)\s+§+\s*"
+    r"([0-9A-Za-z](?:[0-9A-Za-z.\-]*[0-9A-Za-z])?)",
     re.IGNORECASE,
 )
 
