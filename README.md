@@ -91,7 +91,8 @@ the existing milestone order and acceptance criteria remain in effect.
   (v1↔v2 coexist over the same records; a membership change re-hashes the group and
   every member; no artifact keyed by `source_identity_key`). Full-snapshot identity
   manifest at [reports/M1A5_identity_manifest.md](reports/M1A5_identity_manifest.md).
-  The CFR multi-row *composer* (`cfr_source_assembly_v1`) lands in CFR-A2.
+  The CFR multi-row producer (`cfr_source_selection_v1`) lands in CFR-A2 — respecified
+  from composition to **selection** on CFR-A1 evidence.
 - **M0.5B2 — Hierarchy stress test: complete.** Report at
   [reports/M0.5B2_hierarchy.md](reports/M0.5B2_hierarchy.md). A single
   `breadcrumb`-driven parser normalizes CA statutes (variable code/division/part/

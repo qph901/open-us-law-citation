@@ -1,6 +1,6 @@
 """CFR-A1 — the snapshot-internal half of the CFR assembly commissioning spike.
 
-PROPOSAL.md gates the CFR assembly layer: ``cfr_source_assembly_v1`` (CFR-A2) may be
+PROPOSAL.md gates the CFR assembly layer: ``cfr_source_selection_v1`` (CFR-A2) may be
 implemented only **after CFR-A1 reports**, and CFR-A1's *validation* half compares a
 proposed assembly against the point-in-time eCFR edition that is not yet staged. This
 harness builds everything that does **not** depend on that oracle: it enumerates every

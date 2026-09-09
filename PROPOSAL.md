@@ -303,7 +303,7 @@ SourceDocumentAssembly                # content-addressed by its physical member
   member_source_record_ids[]          # NO source_identity_key field (see below)
   member_roles[]        # primary | continuation | duplicate | alternative | ambiguous
   operations[]          # KEEP | APPEND | IGNORE_DUPLICATE | KEEP_SEPARATE | ABSTAIN
-  assembly_strategy     # cfr_source_assembly_v1 | trivial_single_record_v2 | ...  (v1 deprecated)
+  assembly_strategy     # cfr_source_selection_v1 | trivial_single_record_v2 | ...  (v1 deprecated)
   assembly_status       # complete | partial | ambiguous | noncomposable
   assembled_text        # null when noncomposable / ambiguous
   assembled_text_hash   # cross-snapshot change signal for multi-row sections
@@ -590,9 +590,60 @@ members*, but proving completeness against the official section still needs the 
 eCFR. **The validation half remains pending those bytes**; continuation precision/recall,
 assembled-text match, and partial-law rate are all oracle-dependent and unmeasured.
 
-### CFR-A2 — `cfr_source_assembly_v1` producer + eligibility invariant
-Pure **snapshot-internal** assembly (continuation signal + physical row order + dedup); anatomy validates the candidate (one coherent operative structure ⇒ corroborate; N self-contained structures ⇒ reject). When internal evidence is insufficient: `assembly_status = ambiguous`, and **do not concatenate**.
-**Eligibility invariant:** a CFR section is returned as complete authority only if it is a proven single-record section **or** `assembly_status = complete`. Otherwise abstain or mark evidence incomplete (return `source_url`, not half a section). **Returning half a regulation under the whole-section citation is unacceptable.**
+### CFR-A2 — `cfr_source_selection_v1` producer + eligibility invariant
+
+**Respecified around selection, on CFR-A1 evidence.** This milestone was specified as a
+*composer* ("continuation signal + physical row order + dedup"). CFR-A1 measured the corpus
+and that primitive does not fit it: only **34 of 1,083** multi-row groups (3.1%) contain any
+mid-thought continuation seam, while **365** contain a pair where one row's text sits
+**wholly inside** another's. The dominant phenomenon is not a section split across rows but
+**one section captured more than once** — typically one rendering carrying an eCFR amendment
+banner or truncated mid-word. Concatenating such a pair emits the operative text twice under
+a whole-section citation. So the producer's primary operation is **choosing which rendering
+to return**, and composition is a narrow, corroboration-gated special case.
+
+**Core rule — the returned text is always some member's `raw_text`, verbatim.** Selection
+cannot invent, reorder, or splice text, which makes the hard failure below unreachable by
+construction on every path except the composition one. Composition remains available only
+for `candidate_segmented` groups and only with eCFR corroboration; absent that,
+`assembly_status = ambiguous` and **do not concatenate**.
+
+Disposition by the CFR-A1 relation, with the counts it measured at v2026.08:
+
+| relation | groups | selection rule | `assembly_status` |
+|---|---:|---|---|
+| `duplicate_only` | 232 | every member byte-identical ⇒ return any | `complete` |
+| `variant_capture` (containment) | 365 | return the **containing** member | `partial` until corroborated |
+| `variant_capture` (no containment) | 11 | no superset exists to select | `ambiguous` |
+| `candidate_segmented` | 31 | composition candidate; needs corroboration | `ambiguous` |
+| `undetermined` | 444 | no evidence either way | `ambiguous` |
+
+**Why superset selection is `partial`, not `complete`.** Where one member's text wholly
+contains another's, returning the containing member is provably never partial *relative to
+the group's own members* — it holds every byte the contained member held, so selection drops
+nothing. That is **not** proof of completeness against the official section: the containing
+member may itself be truncated, which only the pinned eCFR edition settles. `partial` is
+exactly the right existing status — it carries returnable text for evidence and inspection
+while the eligibility invariant below keeps it out of *complete authority*. Promotion of
+these groups to `complete` is the concrete question the eCFR half of CFR-A1 answers.
+
+**Eligibility invariant (unchanged):** a CFR section is returned as complete authority only
+if it is a proven single-record section **or** `assembly_status = complete`. Otherwise
+abstain or mark evidence incomplete (return `source_url`, not half a section). **Returning
+half a regulation under the whole-section citation is unacceptable.**
+
+**Hard failure (zero tolerance, unchanged):** an assembly marked `complete` whose text is
+missing operative provision text.
+
+**Metrics (eCFR half of CFR-A1 supplies these):** selection precision — did the chosen
+member match the official section text; superset-selection completeness rate — how often the
+containing member *is* the whole official section, which decides `partial` → `complete`
+promotion; composition precision/recall on the 31 `candidate_segmented` groups;
+partial-law rate; and the abstention rate feeding decision B.
+
+**Anatomy's role is unchanged but narrower:** it validates a *composition* candidate (one
+coherent operative structure ⇒ corroborate; N self-contained structures ⇒ reject). It has no
+role in selection, which is settled by byte containment.
 
 ### M0.5B1 — USC anatomy (USLM-aligned)
 **First step, before any metric:** decide USLM's role — *runtime join* (pin `USLM_edition` as a regeneration input / fold into producer version) vs *eval-only* (heuristic runtime detection, USLM measures it). This choice defines whether `operative_text_hash` honors the two-input contract and therefore what the spike measures. USLM is an **eval-only oracle** by default (the production parser runs from `raw_text` + parser version, preserving the two-input reproducibility contract). The experiment is **alignment, not heading-regex**: map USLM structured elements → expected flattened representation → align with Open US Law text → derive USLM-grounded span labels. Taxonomy follows USLM concepts (operative provision, source credit, editorial/statutory/codification notes, amendments, disposition, other). Select the commissioning sample from COV-1A's USC mismatch strata so anatomy work targets measured coverage/text-agreement failures.
@@ -698,7 +749,7 @@ M1A.5  DerivedArtifactProvenance(DAG, +payload_hash) + SourceIdentityGroup/Membe
    │
  COV-1A  pinned official USC/CFR denominators + provision crosswalk          ← IN PROGRESS
    │
-   ├── CFR discrepancy strata → CFR-A1 commissioning → CFR-A2 cfr_source_assembly_v1
+   ├── CFR discrepancy strata → CFR-A1 commissioning → CFR-A2 cfr_source_selection_v1
    │
    └── USC mismatch strata → M0.5B1 anatomy; M0.5B2/M0.5B3 are COMPLETE
    │
@@ -725,7 +776,7 @@ A skeptical pass on the accreted design produced one cut, one scope-down, and fo
 
 **A. `SourceAssemblyPlan` vs `SourceDocumentAssembly` — collapsed into one.** We had split assembly into a *plan* (the KEEP/APPEND/IGNORE_DUPLICATE/… decision) and an *assembly* (the materialized text), on the theory the plan could be reviewed before materialization. That doesn't survive contact with the workflow: the anatomy validator runs on the **materialized candidate text**, not on a plan — there is no "validate the plan before materializing" step to hang a second artifact on. Operations, evidence, confidence, and status live as fields *on* `SourceDocumentAssembly`. Re-split later only if a human approval step appears; the fields already exist.
 
-**B. eCFR build-time-fallback trigger — default to pure snapshot-internal with abstention.** Point-in-time eCFR is mandatory as the CFR coverage denominator and evaluation oracle; this decision governs only whether production assembly acquires a build-time external dependency. Reconsider that fallback if CFR-A1 abstains on **>50% of multi-row CFR groups**, and even then improve the internal heuristic first. Multi-row CFR is ~1,083 groups (~0.5% of ~220k CFR provisions), and abstention is a *safe* outcome (returns `source_url`, never partial law), so recovering a fraction of a fraction does not justify the dependency until the heuristic is demonstrably not working.
+**B. eCFR build-time-fallback trigger — default to pure snapshot-internal with abstention. RESOLVED: no build-time dependency.** Point-in-time eCFR is mandatory as the CFR coverage denominator and evaluation oracle; this decision governs only whether production assembly acquires a build-time external dependency. The trigger was: reconsider if CFR-A1 abstains on **>50% of multi-row CFR groups**. Under the composition specification abstention was **78.6%** (only byte-identical groups resolve), which would have fired it. Under the selection respecification (CFR-A2) it is **44.9%** — 486 of 1,083 groups return `ambiguous` — because superset selection resolves a further 365 groups to returnable `partial` text without any oracle claim. **Below the trigger, so the fallback stays unbuilt.** Note this resolution rests on a *specification* change, not on new bytes; the eCFR half of CFR-A1 can still move it by showing superset selection is unsound, and even then the instruction stands to improve the internal heuristic first. Multi-row CFR is ~1,083 groups (~0.5% of ~220k CFR provisions), and abstention is a *safe* outcome (returns `source_url`, never partial law), so recovering a fraction of a fraction does not justify the dependency until the heuristic is demonstrably not working.
 
 **C. Identity vs assembly sequencing — interfaces co-land, producers are ordered.** The assembly *interface* lands in M1A.5 alongside identity (interfaces are independent). The assembly *producer* runs after the identity strategy has grouped the CFR collision members into a `SourceIdentityGroup`, since it composes over that group.
 
@@ -790,7 +841,7 @@ Reserve **"canonical"** for the immutable source representation. `CanonicalLegal
 1. ~~Run **M0.5A.1**~~ **DONE** — `reports/M0.5A1_segment_provenance.md`. The source-identity contract froze with the *snapshot-observed ordinal* caveat (cross-snapshot stability untestable until a second regulations snapshot; `FR_*` rows are co-numbered distinct captures, so no reading order / no valid concatenation).
 2. ~~Build the **M1A immutable core** with the boundary test in its acceptance suite~~ **DONE** — `src/open_us_law_citation/source_record.py` + `tests/test_source_record.py` (`uv run pytest`, boundary test green).
 3. Do **not** anchor any durable artifact FK to `source_identity_key`.
-4. ~~**Close M1A.5**~~ **DONE** — contracts corrected + frozen (D1 `SourceIdentityGroup`/`SourceIdentityMemberAnnotation`, D2 `payload_hash` + tripwire, uniform validation; D3 freeze-then-build), concrete identity producers built (`identity_strategies.py`), evidence recommissioned (checksum pin D4, CA probe re-run, `reports/M1A5_identity_manifest.md`). Only the CFR multi-row *composer* (`cfr_source_assembly_v1`) remains (CFR-A2).
+4. ~~**Close M1A.5**~~ **DONE** — contracts corrected + frozen (D1 `SourceIdentityGroup`/`SourceIdentityMemberAnnotation`, D2 `payload_hash` + tripwire, uniform validation; D3 freeze-then-build), concrete identity producers built (`identity_strategies.py`), evidence recommissioned (checksum pin D4, CA probe re-run, `reports/M1A5_identity_manifest.md`). Only the CFR multi-row producer (`cfr_source_selection_v1`) remains (CFR-A2; respecified from composition to selection on CFR-A1 evidence).
 5. **Continue COV-1A:** stage and pin the USLM/GovInfo and point-in-time eCFR provision inventories, record their cutoffs/checksums/provenance, run the implemented USC/CFR crosswalks, and emit the preliminary scorecards plus machine-readable discrepancy manifests.
 6. Use COV-1A's discrepancy strata to commission **CFR-A1** and **M0.5B1**; implement CFR-A2 and the promoted USC anatomy producer only after their hard gates pass. M0.5B2 and M0.5B3 are already complete.
 7. Complete M0.5C and freeze M1B only after B1/B2/B3 and CFR-A1/A2 have reported; then build the federal M2 detector/parser and M3 resolver.

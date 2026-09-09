@@ -28,13 +28,13 @@ are built** (`identity_strategies.py`: `usc_act_id_v1`/`state_statute_act_id_v1`
 1:1, and the regulations collision strategies `cfr_identity_v1`/`federal_register_document_v1`/`state_regulation_v1`
 routed by `act_id` namespace), the durable-FK test runs against **real producer outputs**, and the
 full-snapshot identity manifest (`identity_manifest.py` → `reports/M1A5_identity_manifest.md`) is the
-scale evidence + next-snapshot regression fixture. Only the CFR multi-row *composer* (`cfr_source_assembly_v1`)
+scale evidence + next-snapshot regression fixture. Only the CFR multi-row producer (`cfr_source_selection_v1`)
 is **not** built yet (CFR-A2). **M0.5B2** (hierarchy stress test) and
 **M0.5B3** (CA abstraction-falsification probe) are **complete** (`reports/M0.5B2_hierarchy.md`,
 `reports/M0.5B3_ca_abstraction.md`; B3 forced **zero interface changes** to the built types — captured
 two producer/taxonomy notes: `duplicate_row` scopes to the identity group, and anatomy must carry a
 history bracket + not trust `act_status`). Remaining before the M1B semantic freeze: the **CFR assembly
-layer** (CFR-A1 eCFR-validated commissioning → CFR-A2 `cfr_source_assembly_v1` — needs human-staged
+layer** (CFR-A1 eCFR-validated commissioning → CFR-A2 `cfr_source_selection_v1` — needs human-staged
 edition-pinned eCFR; the concrete identity strategies it consumes are **built**), and **M0.5B1** anatomy (needs
 edition-pinned USLM — B3 deferred full anatomy falsification to it), then M1B → M0.5C. Assembly precedes
 anatomy in the layer order; interfaces co-land in M1A.5 but the assembly *producer* runs after identity
@@ -224,7 +224,7 @@ emit Markdown; neither has runtime dependencies on the other:
   its own namespace** before labeling — M1A.5 review P1-5: one shared `(state,corpus,act_id)` key, all
   `regulation`/`regulations`, act_id in the producer's `CFR_`/`FR_`/`STATE_` namespace — an adversarial mixed
   group is rejected, never mislabeled from the first member). Only the CFR multi-row *composer*
-  (`cfr_source_assembly_v1`) is still deferred (CFR-A2). Duck-typed on `.source_record_id`/`.column('act_id')`,
+  (`cfr_source_selection_v1`) is still deferred (CFR-A2). Duck-typed on `.source_record_id`/`.column('act_id')`,
   so `derived/` has **no runtime import** of the immutable core.
 - `src/open_us_law_citation/identity_manifest.py` → `reports/M1A5_identity_manifest.md` (M1A.5 C.3). The
   deterministic full-snapshot identity manifest — scale evidence + next-snapshot regression fixture. **DuckDB**,

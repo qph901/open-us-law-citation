@@ -20,7 +20,7 @@ anatomy**; anatomy validates a candidate assembly, it never generates it.
 * The 99% one-row case uses ``trivial_single_record_v2``: one member, ``KEEP``,
   ``assembled_text = raw_text`` verbatim (``v1`` is deprecated/invalid — see
   ``TRIVIAL_PRODUCER_VERSION``). The real multi-row CFR composer
-  (``cfr_source_assembly_v1``) lands in CFR-A2, gated by the eligibility invariant.
+  (``cfr_source_selection_v1``) lands in CFR-A2, gated by the eligibility invariant.
 * **Eligibility invariant** (M1A.5 review P1): ``assembly_status == complete``
   implies a non-null, returnable ``assembled_text``. A null source body is
   ``NONCOMPOSABLE``, not a complete empty document (``raw_text == ""`` *is* a valid
@@ -82,7 +82,12 @@ class AssemblyStrategy(StrEnum):
     # so a hypothetical legacy label still parses, and is never emitted.
     TRIVIAL_SINGLE_RECORD_V1 = "trivial_single_record_v1"
     TRIVIAL_SINGLE_RECORD_V2 = "trivial_single_record_v2"
-    CFR_SOURCE_ASSEMBLY_V1 = "cfr_source_assembly_v1"
+    # CFR-A2, not yet built. Named for *selection*, not composition: CFR-A1 measured that
+    # only 3.1% of multi-row CFR groups show a continuation seam while 365 hold a
+    # wholly-contained pair, so the producer chooses which member to return (verbatim) and
+    # composes only with eCFR corroboration. Renamed from `cfr_source_assembly_v1`, which
+    # was never emitted -- no artifact carries it, so no id is affected.
+    CFR_SOURCE_SELECTION_V1 = "cfr_source_selection_v1"
 
 
 class AssemblyStatus(StrEnum):
