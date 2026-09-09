@@ -122,9 +122,10 @@ def test_require_valid_xml_rejects_empty_and_html():
 
 def test_stage_ecfr_writes_every_title(tmp_path):
     out = tmp_path / "ecfr"
-    staged = st.stage_ecfr(_ECFR_TEMPLATE, [1, 2, 3], out, _ecfr_fetcher())
-    assert [p.name for p in staged] == ["title-1.xml", "title-2.xml", "title-3.xml"]
-    assert all(p.exists() for p in staged)
+    result = st.stage_ecfr(_ECFR_TEMPLATE, [1, 2, 3], out, _ecfr_fetcher())
+    assert [p.name for p in result.staged] == ["title-1.xml", "title-2.xml", "title-3.xml"]
+    assert result.reused == [] and result.missing == []
+    assert all(p.exists() for p in result.staged)
 
 
 def test_stage_ecfr_rejects_malformed_response(tmp_path):
@@ -293,3 +294,178 @@ def test_http_fetch_passes_through_an_uncompressed_response(monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _PlainResponse())
     assert st.http_fetch("https://www.ecfr.gov/x.xml") == b"<ECFR>plain</ECFR>"
+
+
+def _fetcher_with(missing: set[int] | None = None, fail_times: dict[int, int] | None = None):
+    """A fake eCFR fetcher: `missing` titles 404, `fail_times` titles fail N times first."""
+    missing = missing or set()
+    remaining = dict(fail_times or {})
+
+    def fetch(url: str) -> bytes:
+        title = int(url.rsplit("title-", 1)[1].split(".")[0])
+        if title in missing:
+            raise st.ResourceNotFound(f"{url}: HTTP 404")
+        if remaining.get(title, 0) > 0:
+            remaining[title] -= 1
+            raise ConnectionResetError("reset mid-transfer")
+        return f"<ecfr><title number='{title}'/></ecfr>".encode()
+
+    return fetch
+
+
+def test_an_unexpected_404_aborts_rather_than_shrinking_the_oracle(tmp_path):
+    """Silently omitting a title would understate the coverage denominator with nothing
+    in the record saying so."""
+    with pytest.raises(SystemExit, match="no document"):
+        st.stage_ecfr(_ECFR_TEMPLATE, [1, 2, 3], tmp_path / "e", _fetcher_with(missing={2}))
+
+
+def test_a_title_reserved_in_its_entirety_may_be_declared_missing(tmp_path):
+    """CFR title 35 is reserved in its entirety and has no full-text XML: HTTP 404 is the
+    correct answer, so it is accepted when named -- and reported, never hidden."""
+    result = st.stage_ecfr(
+        _ECFR_TEMPLATE, [1, 35, 36], tmp_path / "e",
+        _fetcher_with(missing={35}), allow_missing_titles={35},
+    )
+    assert result.missing == [35]
+    assert [p.name for p in result.staged] == ["title-1.xml", "title-36.xml"]
+
+
+def test_resume_keeps_valid_files_and_refetches_the_rest(tmp_path):
+    out = tmp_path / "e"
+    out.mkdir()
+    (out / "title-1.xml").write_bytes(b"<ecfr><title number='1'/></ecfr>")
+    (out / "title-2.xml").write_bytes(b"<html><body>truncated error page</body></html>")
+
+    result = st.stage_ecfr(_ECFR_TEMPLATE, [1, 2, 3], out, _fetcher_with(), resume=True)
+    assert result.reused == [1]                      # valid, kept without refetching
+    assert 2 not in result.reused                    # the HTML page is refetched, not trusted
+    assert len(result.staged) == 3
+    assert b"<ecfr>" in (out / "title-2.xml").read_bytes()
+
+
+def test_http_fetch_retries_a_transient_failure_then_succeeds(monkeypatch):
+    import urllib.request
+
+    attempts = {"n": 0}
+
+    class _Resp:
+        headers: dict[str, str] = {}
+
+        def read(self):
+            return b"<ECFR>ok</ECFR>"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def _urlopen(request, timeout=None):
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise ConnectionResetError("reset mid-transfer")
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    body = st.http_fetch("https://www.ecfr.gov/x.xml", sleep=lambda _s: None)
+    assert body == b"<ECFR>ok</ECFR>" and attempts["n"] == 3
+
+
+def test_http_fetch_never_retries_a_404(monkeypatch):
+    """A 404 is permanent; retrying it wastes minutes across ~49 titles."""
+    import urllib.error
+    import urllib.request
+
+    attempts = {"n": 0}
+
+    def _urlopen(request, timeout=None):
+        attempts["n"] += 1
+        raise urllib.error.HTTPError("https://x", 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    with pytest.raises(st.ResourceNotFound):
+        st.http_fetch("https://www.ecfr.gov/x.xml", sleep=lambda _s: None)
+    assert attempts["n"] == 1
+
+
+def test_http_fetch_gives_up_after_max_attempts(monkeypatch):
+    import urllib.request
+
+    attempts = {"n": 0}
+
+    def _urlopen(request, timeout=None):
+        attempts["n"] += 1
+        raise ConnectionResetError("reset")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    with pytest.raises(RuntimeError, match="giving up after 3"):
+        st.http_fetch("https://www.ecfr.gov/x.xml", max_attempts=3, sleep=lambda _s: None)
+    assert attempts["n"] == 3
+
+
+def test_resume_refuses_a_directory_this_tool_did_not_leave_midrun(tmp_path):
+    """The tree hash certifies whatever is in the directory, so resuming into an
+    unmarked one could pin bytes of unknown provenance under this edition's id."""
+    reg = tmp_path / "oracles.json"
+    _write_registry(reg)
+    out = tmp_path / "data" / "ecfr"
+    out.mkdir(parents=True)
+    (out / "title-1.xml").write_bytes(b"<ecfr><title number='1'/></ecfr>")
+    with pytest.raises(SystemExit, match="no staging marker"):
+        st.stage(reg, _ECFR_ID, out, titles=[1, 2], fetcher=_ecfr_fetcher(), resume=True)
+
+
+def test_resume_refuses_when_the_marker_is_for_another_edition(tmp_path):
+    reg = tmp_path / "oracles.json"
+    _write_registry(reg)
+    out = tmp_path / "data" / "ecfr"
+    out.mkdir(parents=True)
+    st.staging_marker(out).write_text(
+        json.dumps({"oracle_edition": "oracle:ecfr:some-other:2020-01-01",
+                    "source_url": _ECFR_TEMPLATE})
+    )
+    with pytest.raises(SystemExit, match="Refusing to certify another edition"):
+        st.stage(reg, _ECFR_ID, out, titles=[1], fetcher=_ecfr_fetcher(), resume=True)
+
+
+def test_marker_lives_outside_the_tree_and_is_cleared_on_success(tmp_path):
+    """It must not be inside the staged directory: sha256_tree_v1 would hash it, so the
+    pin would certify the resume bookkeeping as part of the oracle."""
+    reg = tmp_path / "oracles.json"
+    _write_registry(reg)
+    out = tmp_path / "data" / "ecfr"
+    sha256, method = st.stage(reg, _ECFR_ID, out, titles=[1, 2, 3], fetcher=_ecfr_fetcher())
+    assert method == "sha256_tree_v1"
+    assert st.staging_marker(out).parent == out.parent   # sibling, not child
+    assert not st.staging_marker(out).exists()           # cleared once pinned
+    assert sorted(p.name for p in out.iterdir()) == [
+        "title-1.xml", "title-2.xml", "title-3.xml",
+    ]
+
+
+def test_an_interrupted_run_leaves_a_marker_that_lets_resume_finish_it(tmp_path):
+    reg = tmp_path / "oracles.json"
+    _write_registry(reg)
+    out = tmp_path / "data" / "ecfr"
+    # Title 2 fails hard the first time, so the run aborts after staging title 1.
+    with pytest.raises(RuntimeError):
+        st.stage(reg, _ECFR_ID, out, titles=[1, 2, 3],
+                 fetcher=_raising_fetcher_after(1), overwrite=False)
+    assert st.staging_marker(out).exists()               # resume state survives
+    assert (out / "title-1.xml").exists()
+
+    sha256, _ = st.stage(reg, _ECFR_ID, out, titles=[1, 2, 3],
+                         fetcher=_ecfr_fetcher(), resume=True)
+    assert len(sha256) == 64
+    assert not st.staging_marker(out).exists()
+
+
+def _raising_fetcher_after(last_good: int):
+    def fetch(url: str) -> bytes:
+        title = int(url.rsplit("title-", 1)[1].split(".")[0])
+        if title > last_good:
+            raise RuntimeError("network died mid-run")
+        return f"<ecfr><title number='{title}'/></ecfr>".encode()
+
+    return fetch

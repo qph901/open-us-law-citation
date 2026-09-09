@@ -24,7 +24,13 @@ The operator runs this (it performs the official-government downloads); a fake
     uv run python scripts/stage_oracle.py \
         --oracle-manifest oracles/v2026.08.json \
         --edition oracle:ecfr:point-in-time:2026-08-26 \
-        --out data/oracles/ecfr-2026-08-26 --titles 1-50
+        --out data/oracles/ecfr-2026-08-26 --titles 1-50 --allow-missing 35
+
+``--allow-missing 35`` is required at the 2026-08-26 edition: CFR title 35 is reserved in
+its entirety and the versioner returns HTTP 404 for it. An *unlisted* 404 aborts the run,
+so a title cannot go missing from the oracle without someone saying so. If the run is
+interrupted (large titles take minutes), re-run the same command with ``--resume``: title
+files already on disk are re-validated and kept, and the rest are refetched.
 
     uv run python scripts/stage_oracle.py \
         --oracle-manifest oracles/v2026.08.json \
@@ -39,8 +45,11 @@ import argparse
 import gzip
 import json
 import shutil
+import time
+import urllib.error
 import urllib.request
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 from xml.etree import ElementTree as ET
@@ -55,7 +64,31 @@ Fetcher = Callable[[str], bytes]
 _USER_AGENT = "open-us-law-citation/COV-1A oracle-stager"
 
 
-def http_fetch(url: str, *, timeout: float = 120.0) -> bytes:
+class ResourceNotFound(Exception):
+    """The source has no document at this URL (HTTP 404).
+
+    Distinct from a transient failure: it is never retried, and it is the one outcome a
+    caller may legitimately treat as expected — a CFR title reserved in its entirety has
+    no full-text XML at all (title 35 at the 2026-08-26 edition returns 404).
+    """
+
+
+# Retry only what can plausibly succeed on a second attempt. A 404 is permanent; a 5xx,
+# a 429, or a dropped connection is not. Large titles take minutes -- title 40 is roughly
+# 6x title 21 -- and a mid-transfer reset was observed against the live API, so a staging
+# run of ~49 titles without retry is unlikely to complete.
+_RETRY_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
+_MAX_ATTEMPTS = 4
+_BACKOFF_SECONDS = 5.0
+
+
+def http_fetch(
+    url: str,
+    *,
+    timeout: float = 600.0,
+    max_attempts: int = _MAX_ATTEMPTS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bytes:
     """Fetch one https URL to bytes. https-only, matching the registry invariant.
 
     ``Accept-Encoding: gzip`` is **required**, not an optimisation: the eCFR versioner API
@@ -69,12 +102,27 @@ def http_fetch(url: str, *, timeout: float = 120.0) -> bytes:
     request = urllib.request.Request(
         url, headers={"User-Agent": _USER_AGENT, "Accept-Encoding": "gzip"}
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 (https-only)
-        payload = response.read()
-        encoding = (response.headers.get("Content-Encoding") or "").strip().casefold()
-    if encoding == "gzip":
-        payload = gzip.decompress(payload)
-    return payload
+    last: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+                payload = response.read()
+                encoding = (response.headers.get("Content-Encoding") or "").strip().casefold()
+            if encoding == "gzip":
+                payload = gzip.decompress(payload)
+            return payload
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise ResourceNotFound(f"{url}: HTTP 404") from exc
+            if exc.code not in _RETRY_STATUSES:
+                raise
+            last = exc
+        except (urllib.error.URLError, TimeoutError, ConnectionError, gzip.BadGzipFile) as exc:
+            # A reset or truncated body yields a partial payload we must NOT keep.
+            last = exc
+        if attempt < max_attempts:
+            sleep(_BACKOFF_SECONDS * (2 ** (attempt - 1)))
+    raise RuntimeError(f"{url}: giving up after {max_attempts} attempts ({last})") from last
 
 
 def parse_title_spec(spec: str) -> list[int]:
@@ -120,28 +168,85 @@ def ecfr_title_url(template: str, title: int) -> str:
     return template.replace("{title}", str(title))
 
 
+def staging_marker(out_dir: Path) -> Path:
+    """Resume state, kept **beside** the staged tree, never inside it.
+
+    ``sha256_tree_v1`` hashes every file under the directory, so a marker within it would
+    change what the pin certifies. It lives as a sibling dotfile and is removed on success.
+    """
+    return out_dir.parent / f".{out_dir.name}.staging-state.json"
+
+
+def _resumable(path: Path) -> bool:
+    """Is an already-present title file usable as-is? Re-validated, never trusted."""
+    if not path.is_file():
+        return False
+    try:
+        _require_valid_xml(path.name, path.read_bytes())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class EcfrStaging:
+    staged: list[Path]
+    reused: list[int]     # titles already on disk and revalidated (resume)
+    missing: list[int]    # titles the source has no document for (HTTP 404)
+
+
 def stage_ecfr(
     template: str,
     titles: list[int],
     out_dir: Path,
     fetcher: Fetcher,
-) -> list[Path]:
+    *,
+    allow_missing_titles: frozenset[int] | set[int] = frozenset(),
+    resume: bool = False,
+) -> EcfrStaging:
     """Fetch every requested title's point-in-time XML into ``out_dir``.
 
     Each response is validated as well-formed XML before it is written, so a partial
-    corpus or an error page can never reach the hash step. Returns the staged paths.
+    corpus or an error page can never reach the hash step.
+
+    A title the source has no document for (HTTP 404) is a legitimate outcome — a CFR
+    title reserved in its entirety has no full-text XML — but it is only *accepted* when
+    named in ``allow_missing_titles``. An unexpected 404 aborts, because silently omitting
+    a title would shrink the oracle and understate the coverage denominator without
+    anything in the record saying so.
+
+    With ``resume``, a title already on disk that still parses is kept and not refetched.
+    The file is re-validated rather than trusted; the caller is responsible for ensuring
+    the directory belongs to this edition (see :func:`staging_marker`).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     staged: list[Path] = []
+    reused: list[int] = []
+    missing: list[int] = []
     for title in titles:
-        url = ecfr_title_url(template, title)
         name = f"title-{title}.xml"
-        data = fetcher(url)
-        _require_valid_xml(name, data)
         path = out_dir / name
+        if resume and _resumable(path):
+            staged.append(path)
+            reused.append(title)
+            continue
+        try:
+            data = fetcher(ecfr_title_url(template, title))
+        except ResourceNotFound:
+            if title not in allow_missing_titles:
+                raise SystemExit(
+                    f"title {title}: source has no document (HTTP 404). If this title is "
+                    f"reserved in its entirety, re-run with --allow-missing {title}; "
+                    f"otherwise the oracle would be silently short a title."
+                )
+            missing.append(title)
+            continue
+        _require_valid_xml(name, data)
         path.write_bytes(data)
         staged.append(path)
-    return staged
+    if not staged:
+        raise ValueError("eCFR staging produced no titles")
+    return EcfrStaging(staged=staged, reused=reused, missing=missing)
 
 
 def stage_uslm(url: str, out_path: Path, fetcher: Fetcher) -> Path:
@@ -205,6 +310,8 @@ def stage(
     url: str | None = None,
     fetcher: Fetcher = http_fetch,
     overwrite: bool = False,
+    allow_missing_titles: frozenset[int] | set[int] = frozenset(),
+    resume: bool = False,
 ) -> tuple[str, str]:
     """Stage one edition end to end and pin it. Returns ``(sha256, method)``.
 
@@ -221,9 +328,14 @@ def stage(
             f"edition {edition_id!r} is already pinned (local_path/sha256 set). "
             f"Pass --overwrite to re-stage."
         )
-    if out.exists():
+    if resume and edition.kind != OracleKind.ECFR:
+        raise SystemExit("--resume applies to eCFR staging only (USLM is a single file)")
+    if out.exists() and not resume:
         if not overwrite:
-            raise SystemExit(f"output {out} already exists. Pass --overwrite to replace.")
+            raise SystemExit(
+                f"output {out} already exists. Pass --overwrite to replace, or --resume "
+                f"to continue an interrupted run."
+            )
         if out.is_dir():
             shutil.rmtree(out)
         else:
@@ -233,13 +345,45 @@ def stage(
         if not titles:
             raise SystemExit("eCFR staging requires --titles (e.g. 1-50)")
         template = url or edition.source_url
-        stage_ecfr(template, titles, out, fetcher)
+        # The tree hash certifies whatever is in the directory, so resuming into a
+        # directory left by a DIFFERENT edition (or a different source template) would pin
+        # foreign bytes under this edition's id. The marker makes that unrepresentable:
+        # it records what the interrupted run was staging, and resume refuses on mismatch.
+        marker = staging_marker(out)
+        expected = {"oracle_edition": edition_id, "source_url": template}
+        if resume:
+            if not marker.exists():
+                raise SystemExit(
+                    f"--resume: no staging marker at {marker}. Refusing to resume into a "
+                    f"directory this tool did not leave mid-run; re-stage with --overwrite."
+                )
+            found = json.loads(marker.read_text())
+            if {k: found.get(k) for k in expected} != expected:
+                raise SystemExit(
+                    f"--resume: {marker} was written for {found.get('oracle_edition')!r} "
+                    f"from {found.get('source_url')!r}, not {edition_id!r}. Refusing to "
+                    f"certify another edition's bytes under this one."
+                )
+        else:
+            out.mkdir(parents=True, exist_ok=True)
+            marker.write_text(json.dumps(expected, indent=2, sort_keys=True) + "\n")
+        result = stage_ecfr(
+            template, titles, out, fetcher,
+            allow_missing_titles=allow_missing_titles, resume=resume,
+        )
+        if result.missing:
+            print(f"titles with no document at this edition (allowed): {result.missing}")
+        if result.reused:
+            print(f"titles reused from the interrupted run: {len(result.reused)}")
     else:  # USLM
         source = url or edition.source_url
         stage_uslm(source, out, fetcher)
 
     sha256, method = oracle_source_sha256(out)
     pin_edition(manifest_path, edition_id, out, sha256)
+    # Pinned: the run is complete, so the resume state is no longer meaningful.
+    if edition.kind == OracleKind.ECFR:
+        staging_marker(out).unlink(missing_ok=True)
     return sha256, method
 
 
@@ -255,11 +399,22 @@ def main(argv: list[str] | None = None) -> None:
                     help="override the fetch URL (e.g. the USLM release ZIP; the "
                          "registry source_url is the .htm index)")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--resume", action="store_true",
+                    help="eCFR only: continue an interrupted run, keeping title files "
+                         "already on disk that still validate.")
+    ap.add_argument("--allow-missing", default=None,
+                    help="eCFR only: title spec the source legitimately has no document "
+                         "for (e.g. '35', a title reserved in its entirety). An "
+                         "unlisted 404 aborts.")
     args = ap.parse_args(argv)
     titles = parse_title_spec(args.titles) if args.titles else None
+    allow_missing = (
+        frozenset(parse_title_spec(args.allow_missing)) if args.allow_missing else frozenset()
+    )
     sha256, method = stage(
         args.oracle_manifest, args.edition, args.out,
         titles=titles, url=args.url, overwrite=args.overwrite,
+        allow_missing_titles=allow_missing, resume=args.resume,
     )
     print(f"pinned {args.edition}", flush=True)
     print(f"  local_path: {args.out.as_posix()}", flush=True)
