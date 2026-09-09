@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -848,3 +849,70 @@ def test_excluding_a_missing_child_is_a_no_op():
 
     element = ET.fromstring('<DIV8 TYPE="SECTION" N="1.1"><P>Only a body.</P></DIV8>')
     assert _flatten_xml_text_excluding(element, None) == "Only a body."
+
+
+def test_an_inventory_from_an_older_text_projection_is_refused(tmp_path: Path):
+    """A saved inventory stores only hashes, so a stale one loads happily and silently
+    reproduces the OLD projection's results.
+
+    Concretely: v1 included the section heading in the operative text, which made exact
+    and normalized agreement 0.00% across 113,224 provisions. Reusing a v1 inventory under
+    v2 code would quietly report that 0% again, with nothing to indicate why.
+    """
+    source = tmp_path / "title-3.xml"
+    source.write_text(
+        """<ECFR TITLE="3"><DIV5 TYPE="PART" N="100">
+        <DIV8 TYPE="SECTION" N="100.1"><HEAD>§ 100.1 Scope.</HEAD><P>Body.</P></DIV8>
+        </DIV5></ECFR>"""
+    )
+    inventory = inventory_from_xml(
+        source_path=source, corpus=FederalCorpus.CFR, oracle_edition="oracle:test:ecfr",
+        oracle_kind=OracleKind.ECFR, edition_date="2026-08-26",
+        source_url="https://official.example/title-{title}.xml",
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        currency_basis="fixture",
+    )
+    saved = tmp_path / "inv.json"
+    saved.write_text(render_official_inventory(inventory))
+    assert load_official_inventory(saved).provisions[0].key.section == "100.1"
+
+    # Downgrade the recorded projection, as a file written before the fix would carry.
+    stale = json.loads(saved.read_text())
+    stale["official_text_projection"] = "xml_text_nodes_newline_v1"
+    saved.write_text(json.dumps(stale))
+    with pytest.raises(ValueError, match="not comparable"):
+        load_official_inventory(saved)
+
+
+def test_reserved_survives_an_inventory_round_trip(tmp_path: Path):
+    """Without serialising `reserved`, a reloaded inventory puts every empty placeholder
+    back into `expected` to be scored `missing` — the gap the stratum exists to close."""
+    source = tmp_path / "title-3.xml"
+    source.write_text(
+        """<ECFR TITLE="3"><DIV5 TYPE="PART" N="100">
+        <DIV8 TYPE="SECTION" N="100.1"><HEAD>§ 100.1 Scope.</HEAD><P>Body.</P></DIV8>
+        <DIV8 TYPE="SECTION" N="100.2-100.9"><HEAD>§§ 100.2-100.9   [Reserved]</HEAD></DIV8>
+        </DIV5></ECFR>"""
+    )
+    inventory = inventory_from_xml(
+        source_path=source, corpus=FederalCorpus.CFR, oracle_edition="oracle:test:ecfr",
+        oracle_kind=OracleKind.ECFR, edition_date="2026-08-26",
+        source_url="https://official.example/title-{title}.xml",
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        currency_basis="fixture",
+    )
+    saved = tmp_path / "inv.json"
+    saved.write_text(render_official_inventory(inventory))
+    reloaded = load_official_inventory(saved)
+
+    before = {p.key.section: p.reserved for p in inventory.provisions}
+    after = {p.key.section: p.reserved for p in reloaded.provisions}
+    assert before == after == {"100.1": False, "100.2-100.9": True}
+
+    # And the reloaded inventory still holds reserved out of the denominator.
+    baseline = build_baseline(
+        inventory=reloaded, inventory_sha256="b" * 64, dataset=_evidence(),
+        candidates=[_candidate(FederalCorpus.CFR, "100.1", "Body", ordinal=1, title="3")],
+    )
+    counts = coverage_counts(baseline.entries)
+    assert counts["expected"] == 1 and counts["reserved"] == 1 and counts["missing"] == 0

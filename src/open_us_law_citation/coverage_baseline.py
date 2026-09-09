@@ -43,7 +43,16 @@ from .source_record import (
 SCHEMA_VERSION = 1
 MATCH_METHOD = "canonical_title_section_v1"
 TEXT_NORMALIZATION = "unicode_nfc_whitespace_v1"
-OFFICIAL_TEXT_PROJECTION = "xml_text_nodes_newline_v1"
+# Bump this whenever the official text projection changes what it hashes. A saved
+# inventory stores only the resulting hashes, so without a bump an inventory built by an
+# older projection loads happily and silently reproduces that projection's results.
+#
+# v1 -> v2: the section HEADING is no longer part of the operative text. v1 included it
+# ("§ 100.1   Ethical conduct standards.\n..."), while the Open US Law `text` column starts
+# at the body, so EVERY provision mismatched: exact and normalized text agreement were both
+# 0.00% across 113,224 represented provisions. Excluding it gives 65.57% / 69.73%. A v1
+# inventory reused under v2 code would quietly report the 0% again.
+OFFICIAL_TEXT_PROJECTION = "xml_text_nodes_newline_v2"
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SECTION_MARK_RE = re.compile(r"^\s*\N{SECTION SIGN}{1,2}\s*")
@@ -857,6 +866,10 @@ def official_inventory_dict(inventory: OfficialInventory) -> dict[str, Any]:
                 "source_url": provision.source_url,
                 "raw_text_sha256": provision.raw_text_sha256,
                 "normalized_text_sha256": provision.normalized_text_sha256,
+                # Round-tripped: without it a reloaded inventory loses every reserved flag,
+                # putting empty placeholders back into `expected` to be scored `missing` --
+                # the exact gap the reserved stratum exists to close.
+                "reserved": provision.reserved,
             }
             for provision in sorted(
                 inventory.provisions, key=lambda item: _entry_sort_key(item.key)
@@ -881,7 +894,12 @@ def load_official_inventory(path: str | Path) -> OfficialInventory:
     if raw.get("artifact") != "official-provision-inventory":
         raise ValueError("input is not an official-provision-inventory artifact")
     if raw.get("official_text_projection") != OFFICIAL_TEXT_PROJECTION:
-        raise ValueError("official inventory uses an unsupported text projection")
+        raise ValueError(
+            f"official inventory was built by text projection "
+            f"{raw.get('official_text_projection')!r}, but this code produces "
+            f"{OFFICIAL_TEXT_PROJECTION!r}. Its stored hashes are not comparable — rebuild "
+            f"the inventory from the pinned oracle rather than reusing it."
+        )
     corpus = FederalCorpus(raw["corpus"])
     currencies = tuple(
         TitleCurrency(item["title"], item["legal_content_cutoff"], item["basis"])
@@ -894,6 +912,7 @@ def load_official_inventory(path: str | Path) -> OfficialInventory:
             source_url=item["source_url"],
             raw_text_sha256=item["raw_text_sha256"],
             normalized_text_sha256=item["normalized_text_sha256"],
+            reserved=bool(item["reserved"]),
         )
         for item in raw["provisions"]
     )
