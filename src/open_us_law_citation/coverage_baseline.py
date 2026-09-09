@@ -925,9 +925,47 @@ def _direct_child(element: ET.Element, name: str) -> ET.Element | None:
 
 
 def _title_from_name(name: str, corpus: FederalCorpus) -> str | None:
+    """The title a source document's filename claims, or None.
+
+    Range-bounded: the US Code has 54 titles and the CFR 50, so a filename yielding
+    anything outside that is not a title and the caller falls back (USC) or fails (CFR)
+    rather than anchoring a whole document to a denominator key that cannot exist.
+
+    Verified against the real staged eCFR edition -- all 28 staged `title-N.xml`
+    filenames resolve exactly. The USC half is NOT verified against real bytes:
+    uscode.house.gov has been unreachable throughout, so the `usc01.xml` convention this
+    assumes comes from the repository's own fixtures, not from an observed release point.
+    See `_reject_repeated_title` for the guard that makes a filename surprise loud.
+    """
     pattern = _USLM_TITLE_RE if corpus == FederalCorpus.USC else _ECFR_TITLE_RE
     match = pattern.search(Path(name).stem)
-    return str(int(match.group(1))) if match else None
+    if match is None:
+        return None
+    title = str(int(match.group(1)))
+    return title if title_in_range(corpus, title) else None
+
+
+def _reject_repeated_title(seen: dict[str, str], name: str, title: str) -> None:
+    """Each title must come from exactly one source document.
+
+    One file per title holds for both oracles -- eCFR serves one XML per title, and a USC
+    release point ships one XML per title. A second document claiming a title already
+    taken means the filename convention is not what this code assumes, and the dangerous
+    outcome is SILENT: an appendix (`usc05A.xml` would resolve to title 5) carries section
+    numbers that do not collide with title 5's, so its provisions would merge into title
+    5's denominator and inflate it with no duplicate-key error to show for it.
+
+    Raising costs nothing when the assumption holds and catches the case whatever the real
+    naming turns out to be -- which matters because the USC convention is unverified here.
+    """
+    if title in seen and seen[title] != name:
+        raise ValueError(
+            f"two source documents both resolve to title {title}: {seen[title]!r} and "
+            f"{name!r}. Each title must come from exactly one document; if this release "
+            f"point splits a title (or ships an appendix), the projection needs to "
+            f"distinguish them rather than merge their provisions into one denominator."
+        )
+    seen[title] = name
 
 
 def _xml_documents(path: Path) -> Iterator[tuple[str, bytes]]:
@@ -1079,8 +1117,12 @@ def inventory_from_xml(
         raise ValueError("official source checksum differs from the pinned manifest")
     parser = _uslm_provisions if corpus == FederalCorpus.USC else _ecfr_provisions
     provisions: list[OfficialProvision] = []
+    titles_seen: dict[str, str] = {}
     for name, data in _xml_documents(path):
-        provisions.extend(parser(name, data, source_url))
+        produced = list(parser(name, data, source_url))
+        for title in {item.key.title for item in produced}:
+            _reject_repeated_title(titles_seen, name, title)
+        provisions.extend(produced)
     if not provisions:
         raise ValueError("official source produced zero section provisions")
     titles = sorted({item.key.title for item in provisions}, key=int)

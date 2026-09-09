@@ -710,3 +710,78 @@ def test_title_recovery_pattern_is_anchored_to_canonical_cfr_act_ids():
     for bad in ("FR_PRORULE_2025-06180", "USC_T42_C21_S1983", "XCFR_T10_P1",
                 "CFR_P54_S54_17", "CFR_TX_P1", "CFR_T10"):
         assert _CFR_TITLE_FROM_ACT_ID.match(bad) is None, bad
+
+
+@pytest.mark.parametrize(
+    "filename,expected",
+    [
+        # The convention the repo's own fixtures assume. NOT verified against a real OLRC
+        # release point -- uscode.house.gov has been unreachable throughout this work.
+        ("usc01.xml", "1"),
+        ("usc42.xml", "42"),
+        ("usc54.xml", "54"),            # the highest real title
+        ("uscode05.xml", "5"),
+        ("usc_10.xml", "10"),
+        ("usc-10.xml", "10"),
+        # Out of range -> None, so the caller falls back to <docNumber> rather than
+        # anchoring a document to a title that cannot exist.
+        ("usc55.xml", None),
+        ("usc00.xml", None),
+        ("usc999.xml", None),
+        # Not a USC filename at all.
+        ("title-3.xml", None),
+        ("readme.xml", None),
+    ],
+)
+def test_uslm_title_from_filename(filename, expected):
+    from open_us_law_citation.coverage_baseline import _title_from_name
+
+    assert _title_from_name(filename, FederalCorpus.USC) == expected
+
+
+def test_uslm_appendix_filename_resolves_to_the_bare_title():
+    """`usc05A.xml` yields "5", the same as `usc05.xml`.
+
+    Recorded as observed behaviour, not endorsed: whether OLRC names appendices this way
+    is unverified here. It is precisely why `_reject_repeated_title` exists — the merge it
+    would otherwise cause is silent, since appendix sections do not collide with title 5's.
+    """
+    from open_us_law_citation.coverage_baseline import _title_from_name
+
+    assert _title_from_name("usc05A.xml", FederalCorpus.USC) == "5"
+    assert _title_from_name("usc05.xml", FederalCorpus.USC) == "5"
+
+
+def test_two_documents_claiming_one_title_is_refused(tmp_path: Path):
+    """The silent failure this prevents: two files merging into one title's denominator."""
+    source = tmp_path / "ecfr"
+    source.mkdir()
+    for name in ("title-3.xml", "title-3-appendix.xml"):
+        (source / name).write_text(
+            """<ECFR TITLE="3"><DIV5 TYPE="PART" N="100">
+            <DIV8 TYPE="SECTION" N="100.1"><HEAD>§ 100.1 A.</HEAD><P>x</P></DIV8>
+            </DIV5></ECFR>""".replace("100.1", "100.1" if name == "title-3.xml" else "200.9")
+        )
+    with pytest.raises(ValueError, match="both resolve to title 3"):
+        inventory_from_xml(
+            source_path=source, corpus=FederalCorpus.CFR, oracle_edition="oracle:test:ecfr",
+            oracle_kind=OracleKind.ECFR, edition_date="2026-08-26",
+            source_url="https://official.example/title-{title}.xml",
+            source_sha256=oracle_source_sha256(source)[0],
+            currency_basis="point-in-time eCFR fixture",
+        )
+
+
+def test_ecfr_title_from_filename_matches_every_staged_file():
+    """The eCFR half IS verified against real bytes: every staged title-N.xml resolves."""
+    import glob
+
+    from open_us_law_citation.coverage_baseline import _title_from_name
+
+    staged = sorted(glob.glob("data/oracles/ecfr-2026-08-26/title-*.xml"))
+    if not staged:
+        pytest.skip("no staged eCFR edition present")
+    for path in staged:
+        name = Path(path).name
+        expected = name.removeprefix("title-").removesuffix(".xml")
+        assert _title_from_name(name, FederalCorpus.CFR) == expected
