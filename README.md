@@ -114,16 +114,46 @@ the existing milestone order and acceptance criteria remain in effect.
   *distinct* provisions — content ≠ identity), and anatomy (B1) must carry a
   leading `[Repealed … and added by Stats. …]` history bracket and not trust
   `act_status`. **M0.5B1 (needs USLM) / CFR-A1 (needs eCFR): not started.**
-- **COV-1A — official federal provision baseline: in progress.** The first
-  buildable slice is in
+- **COV-1A — official federal provision baseline: CFR half complete, USC half
+  blocked.** The engine is in
   [`src/open_us_law_citation/coverage_baseline.py`](src/open_us_law_citation/coverage_baseline.py):
   checksum-gated USLM/eCFR provision inventories, deterministic zero/one/multiple
   crosswalks, separate structural/currency/text outcomes, explicit Federal
-  Register exclusion, and byte-stable JSON/Markdown output. The implementation
-  status and metric definitions are in
-  [`reports/COV-1A_status.md`](reports/COV-1A_status.md). Real USC/CFR scorecards
-  remain pending until the complete official bytes are staged and pinned; no row
-  count is presented as coverage.
+  Register exclusion, and byte-stable JSON/Markdown output. Metric definitions
+  and the full analysis are in
+  [`reports/COV-1A_status.md`](reports/COV-1A_status.md).
+
+  The **eCFR oracle is staged and pinned** — all 49 titles of the 2026-08-26
+  point-in-time edition under `sha256_tree_v1` — and the first real scorecard is
+  [`reports/COV-1A_cfr_baseline.md`](reports/COV-1A_cfr_baseline.md):
+  **structurally represented 99.3385%**, exact text 60.81%, normalized text
+  70.48%, against an official denominator of 219,056 law-carrying sections.
+  The projection validates against an independent official measurement — **all
+  49 titles match the eCFR structure API's section counts exactly, 227,521 =
+  227,521**.
+
+  Two strata are held out of that denominator because the official source
+  publishes no law at those keys: **7,001 `reserved`** placeholders and **1,464
+  `empty_official_body`** heading-only parents (`48 CFR 1.105` is a heading whose
+  law lives in `1.105-1/-2/-3`). All **366** remaining `missing` sections are
+  individually accounted for — 291 cross-reference stubs (284 of them the federal
+  milk marketing orders incorporating part 1000 by reference), 36 in two parts the
+  snapshot carries under an older numbering, 15 terse plain-language answers, 15
+  that entered the CFR after the snapshot, 9 eCFR amendment banners. **None is
+  unexplained**, and none is explained away: an incorporation by reference is
+  operative law and stays `missing`.
+
+  The **CFR content cutoff is established at 2026-08-12** (`residual_skew_days`
+  14) from two independent estimators — removals reflected through 2026-08-12 and
+  not from 2026-08-17, and text agreement collapsing across the same boundary
+  against a flat date-independent noise floor. Currency deliberately abstains to
+  `pending` per provision: a corpus-level date gap is not per-provision
+  staleness, and only 203 sections (0.09%) actually changed in the 14-day window.
+
+  The **USC half is blocked** on `uscode.house.gov`, which has been unreachable;
+  GovInfo cannot substitute because the dataset's own USC is a GovInfo-HTML
+  re-parse, so that comparison would be circular. No row count is presented as
+  coverage.
 - **M2 — federal exact-citation parser (oracle-independent slice): started.**
   [`src/open_us_law_citation/citation_parser.py`](src/open_us_law_citation/citation_parser.py):
   a deterministic USC/CFR citation grammar (`usc_grammar_v1` / `cfr_grammar_v3`) →
