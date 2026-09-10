@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from open_us_law_citation.coverage_baseline import (
+    _ECFR_RESERVED_RE,
     TITLE_MAX,
     CurrencyStatus,
     DatasetCandidate,
@@ -152,6 +153,7 @@ def test_crosswalk_reports_zero_one_and_multiple_candidates_without_coercion():
         "represented": 2,
         "missing": 1,
         "reserved": 0,
+        "empty_official_body": 0,
         "stale": 0,
         "duplicate": 1,
         "ambiguous": 1,
@@ -916,3 +918,232 @@ def test_reserved_survives_an_inventory_round_trip(tmp_path: Path):
     )
     counts = coverage_counts(baseline.entries)
     assert counts["expected"] == 1 and counts["reserved"] == 1 and counts["missing"] == 0
+
+
+# --- empty_official_body: the stratum, and the regex that feeds it -------------------
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        "§ 1.8   [Reserved]",
+        "§ 1270.5   [Reserved].",              # trailing period (structure API says no)
+        "§ 83.28   [Reserved] (Rule 28).",     # trailing parenthetical
+        "§§ 989.221-989.257 [Reserved",        # 7 CFR: no closing bracket
+        "§ 93.323 [Reserved",                  # 14 CFR: no closing bracket
+        "§ 176.142   Reserved]",               # 49 CFR: no opening bracket
+        "§ 100.11 ]Reserved]",                 # 31 CFR: mistyped opening bracket
+        "§ 80.149 {Reserved]",                 # 47 CFR: brace for bracket
+    ],
+)
+def test_reserved_head_matches_every_real_bracket_typo(head: str):
+    """All five malformed variants are real headings in the pinned CFR 2026-08-26 edition,
+    each with an empty body. A strict `\\[reserved\\]` missed all five."""
+    assert _ECFR_RESERVED_RE.search(head) is not None
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        "§ 214.402 Career reserved positions.",           # 5 CFR
+        "§ 4284.916 Reserved funds.",                     # 7 CFR
+        "§ 4284.923 Reserved funds eligibility.",         # 7 CFR
+        "§ 46.15 Documents to be preserved.",             # 7 CFR
+        "§ 601.2 Functions reserved to the Secretary.",   # 7 CFR
+        "§ 328.109 Other actions preserved.",             # 12 CFR
+        "§ 2.23 Use of reserved authority in licenses.",  # 18 CFR
+        "§ 240.17a-4 Records to be preserved [1997].",    # bracket, but not around it
+        "Records to be preserved]",                       # `preserved]` must NOT match
+        "[Records] to be preserved by brokers.",          # bracket far from the word
+    ],
+)
+def test_reserved_head_rejects_law_that_merely_says_reserved(head: str):
+    """61 headings in the same edition use these letters as law, not as a placeholder.
+    Dropping the bracket to catch the typos would swallow every one of them, and the word
+    boundary is what stops `preserved]` from matching."""
+    assert _ECFR_RESERVED_RE.search(head) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("", True),
+        ("   ", True),
+        ("\n\n\t ", True),          # whitespace-only normalizes to "" exactly
+        ("\xa0", True),            # str.split() treats NBSP as whitespace: empty
+        ("law", False),
+        (" law ", False),
+        (None, False),              # text UNAVAILABLE is not text that is empty
+    ],
+)
+def test_empty_body_is_derived_from_the_official_text(text: str | None, expected: bool):
+    provision = OfficialProvision.from_text(
+        key=ProvisionKey(FederalCorpus.CFR, "48", "1.105"),
+        official_id="cfr-title-48-section-1.105",
+        source_url="https://official.example/title-48.xml",
+        text=text,
+    )
+    assert provision.empty_body is expected
+
+
+def test_empty_body_cannot_be_asserted_against_the_stored_hash():
+    """`empty_body` is a checkable property of the normalized hash, not a claim, so a
+    directly-constructed provision cannot mark a section with law as empty."""
+    with_law = OfficialProvision.from_text(
+        key=ProvisionKey(FederalCorpus.CFR, "48", "1.106"),
+        official_id="cfr-title-48-section-1.106",
+        source_url="https://official.example/title-48.xml",
+        text="Contracting authority.",
+    )
+    with pytest.raises(ValueError, match="empty_body"):
+        replace(with_law, empty_body=True)
+    empty = OfficialProvision.from_text(
+        key=ProvisionKey(FederalCorpus.CFR, "48", "1.105"),
+        official_id="cfr-title-48-section-1.105",
+        source_url="https://official.example/title-48.xml",
+        text="",
+    )
+    with pytest.raises(ValueError, match="empty_body"):
+        replace(empty, empty_body=False)
+
+
+def _empty_body_official(section: str, *, title: str = "48") -> OfficialProvision:
+    return OfficialProvision.from_text(
+        key=ProvisionKey(FederalCorpus.CFR, title, section),
+        official_id=f"cfr-title-{title}-section-{section}",
+        source_url=f"https://official.example/title-{title}.xml",
+        text="",
+    )
+
+
+def _empty_body_inventory(*sections: str) -> OfficialInventory:
+    return OfficialInventory(
+        corpus=FederalCorpus.CFR,
+        oracle_edition="oracle:test:ecfr",
+        oracle_kind=OracleKind.ECFR,
+        edition_date="2026-08-26",
+        source_url="https://official.example/title-{title}.xml",
+        source_sha256=SHA_A,
+        title_currency=(TitleCurrency("48", "2026-08-26", "point-in-time eCFR fixture"),),
+        provisions=(
+            _official(FederalCorpus.CFR, "1.106", "Contracting authority.", title="48"),
+            _official(FederalCorpus.CFR, "1.107", "Publication.", title="48"),
+            *(_empty_body_official(s) for s in sections),
+        ),
+    )
+
+
+def test_empty_official_body_is_held_out_of_the_denominator():
+    """`48 CFR 1.105` is a heading with no body -- its law is in `1.105-1/-2/-3`, which the
+    dataset carries. Scoring the parent `missing` invented a 1,469-section CFR gap."""
+    baseline = build_baseline(
+        inventory=_empty_body_inventory("1.105"),
+        inventory_sha256=SHA_B,
+        dataset=_evidence(),
+        candidates=[
+            _candidate(
+                FederalCorpus.CFR, "1.106", "Contracting authority.", ordinal=1, title="48"
+            )
+        ],
+    )
+    by_section = {e.key.section: e for e in baseline.entries}
+    assert by_section["1.105"].structural_status == StructuralStatus.EMPTY_OFFICIAL_BODY
+    assert by_section["1.106"].structural_status == StructuralStatus.REPRESENTED
+    assert by_section["1.107"].structural_status == StructuralStatus.MISSING
+
+    counts = coverage_counts(baseline.entries)
+    assert counts["empty_official_body"] == 1
+    assert counts["expected"] == 2          # NOT 3
+    assert counts["missing"] == 1           # NOT 2
+    # ... so coverage is 1/2, not 1/3.
+    assert coverage_rates(counts)["represented_percent"] == "50.0000"
+    # An empty-bodied section has no operative text, so it enters no text bucket.
+    assert counts["exact_text"] + counts["mismatch_text"] + counts["unavailable_text"] == 2
+
+
+def test_empty_official_body_stays_held_out_when_the_dataset_carries_a_row():
+    """Classification follows the *official* source, exactly as `reserved` does."""
+    baseline = build_baseline(
+        inventory=_empty_body_inventory("1.105"),
+        inventory_sha256=SHA_B,
+        dataset=_evidence(),
+        candidates=[
+            _candidate(FederalCorpus.CFR, "1.105", "surprise text", ordinal=1, title="48")
+        ],
+    )
+    by_section = {e.key.section: e for e in baseline.entries}
+    assert by_section["1.105"].structural_status == StructuralStatus.EMPTY_OFFICIAL_BODY
+    counts = coverage_counts(baseline.entries)
+    assert counts["expected"] == 2 and counts["empty_official_body"] == 1
+
+
+def test_empty_body_survives_an_inventory_round_trip(tmp_path: Path):
+    """Without serialising `empty_body`, a reloaded inventory puts every heading-only
+    parent back into `expected` to be scored `missing`."""
+    inventory = _empty_body_inventory("1.105")
+    path = tmp_path / "inventory.json"
+    path.write_text(render_official_inventory(inventory), encoding="utf-8")
+    reloaded = load_official_inventory(path)
+    before = {p.key.section: p.empty_body for p in inventory.provisions}
+    after = {p.key.section: p.empty_body for p in reloaded.provisions}
+    assert before == after and before["1.105"] is True
+
+    baseline = build_baseline(
+        inventory=reloaded,
+        inventory_sha256=SHA_B,
+        dataset=_evidence(),
+        candidates=[
+            _candidate(
+                FederalCorpus.CFR, "1.106", "Contracting authority.", ordinal=1, title="48"
+            )
+        ],
+    )
+    counts = coverage_counts(baseline.entries)
+    assert counts["expected"] == 2 and counts["empty_official_body"] == 1
+
+
+def test_a_pre_stratum_inventory_is_rejected_rather_than_silently_defaulted(
+    tmp_path: Path,
+):
+    """A schema-1 inventory has no `empty_body` field. Defaulting it to False would put
+    1,469 CFR sections back into `expected` and report a 4x-overstated `missing` -- so the
+    load must fail loudly instead."""
+    inventory = _empty_body_inventory("1.105")
+    payload = json.loads(render_official_inventory(inventory))
+    payload["schema_version"] = 1
+    for item in payload["provisions"]:
+        del item["empty_body"]
+    path = tmp_path / "old-inventory.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="unsupported official inventory schema"):
+        load_official_inventory(path)
+
+
+def test_ecfr_projection_marks_heading_only_parents_as_empty(tmp_path: Path):
+    """End to end from real-shaped bytes: the parent carries a heading and nothing else,
+    its hyphen-suffixed children carry the law."""
+    source = tmp_path / "title-48.xml"
+    source.write_text(
+        """<ECFR TITLE="48"><DIV5 TYPE="PART" N="1">
+        <DIV8 TYPE="SECTION" N="1.105"><HEAD>1.105   Issuance.</HEAD></DIV8>
+        <DIV8 TYPE="SECTION" N="1.105-1"><HEAD>1.105-1   Publication.</HEAD>
+        <P>The FAR is published in...</P></DIV8>
+        <DIV8 TYPE="SECTION" N="1.105-2"><HEAD>1.105-2   Arrangement.</HEAD>
+        <P>The FAR is divided into...</P></DIV8>
+        </DIV5></ECFR>"""
+    )
+    inventory = inventory_from_xml(
+        source_path=source,
+        corpus=FederalCorpus.CFR,
+        oracle_edition="oracle:test:ecfr",
+        oracle_kind=OracleKind.ECFR,
+        edition_date="2026-08-26",
+        source_url="https://official.example/title-{title}.xml",
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        currency_basis="point-in-time eCFR fixture",
+    )
+    by_section = {p.key.section: p for p in inventory.provisions}
+    assert by_section["1.105"].empty_body is True
+    assert by_section["1.105"].reserved is False    # empty, but not a placeholder
+    assert by_section["1.105-1"].empty_body is False
+    assert by_section["1.105-2"].empty_body is False

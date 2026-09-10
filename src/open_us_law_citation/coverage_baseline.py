@@ -40,7 +40,12 @@ from .source_record import (
     file_sha256,
 )
 
-SCHEMA_VERSION = 1
+# 2: adds the `empty_official_body` stratum. A v1 inventory has no `empty_body` field, so
+# reloading one would silently put 1,469 CFR heading-only sections back into `expected` to
+# be scored `missing` -- the very gap this version closes. The loader rejects v1 outright
+# rather than defaulting the field, because a quiet default is how a stale inventory ships
+# a plausible wrong number.
+SCHEMA_VERSION = 2
 MATCH_METHOD = "canonical_title_section_v1"
 TEXT_NORMALIZATION = "unicode_nfc_whitespace_v1"
 # Bump this whenever the official text projection changes what it hashes. A saved
@@ -59,12 +64,29 @@ _SECTION_MARK_RE = re.compile(r"^\s*\N{SECTION SIGN}{1,2}\s*")
 _USLM_TITLE_RE = re.compile(r"(?:^|[^a-z])usc(?:ode)?[-_ ]*0*(\d+)", re.I)
 _ECFR_TITLE_RE = re.compile(r"title[-_ ]*0*(\d+)", re.I)
 # eCFR marks a reserved section ONLY in its <HEAD> ("§ 1.8   [Reserved]"). There is no
-# RESERVED attribute in the full-title XML -- verified against titles 1, 3, 11 and 23 at
-# the 2026-08-26 edition, where every one of the 64 [Reserved] sections is an element with
-# an empty body. The trailing-period variant ("[Reserved].") is real and must match: it is
-# the one case where the eCFR structure API's own `reserved` flag disagrees, and the XML is
+# RESERVED attribute in the full-title XML -- verified across all 49 staged titles at the
+# 2026-08-26 edition, where every [Reserved] section is an element with an empty body.
+#
+# The bracket is load-bearing and BOTH sides are optional, because OFR mistypes them. A
+# strict `\[reserved\]` missed exactly 5 real placeholders in the pinned edition, each
+# with an empty body: `[Reserved` (7 CFR 989.221-989.257, 14 CFR 93.323), `Reserved]`
+# (49 CFR 176.142), `]Reserved]` (31 CFR 100.11) and `{Reserved]` (47 CFR 80.149).
+#
+# What the bracket must keep OUT is ordinary prose, and dropping it entirely would be a
+# disaster: 61 headings in the same edition contain the letters "reserved" as law, not as
+# a placeholder -- "Career reserved positions" (5 CFR 214.402), "Reserved funds"
+# (7 CFR 4284.916), "Documents to be preserved" (7 CFR 46.15). Hence a bracket on at
+# least one side, plus a word boundary so `preserved]` can never match.
+#
+# The trailing-period variant ("[Reserved].") is real and must match: it is one of the
+# three cases where the eCFR structure API's own `reserved` flag disagrees, and the XML is
 # right -- 23 CFR 1270.5 is an empty placeholder that the API reports as not reserved.
-_ECFR_RESERVED_RE = re.compile(r"\[\s*reserved\s*\]", re.I)
+# The API flags reserved by a SUFFIX match on the heading, so anything after the closing
+# bracket defeats it; 442 of 442 headings ending at `[Reserved]` are API-flagged and 3 of
+# 3 carrying trailing text are not. All three have empty bodies.
+_ECFR_RESERVED_RE = re.compile(
+    r"[\[\]{}]\s*\breserved\b|\breserved\b\s*[\]}]", re.I
+)
 # The first bounded digit run in a USLM <docNumber>. Named rather than inline so it is
 # visible to a pattern survey and testable on its own; its result is range-checked.
 _USLM_DOCNUMBER_RE = re.compile(r"\b(\d+)\b")
@@ -99,6 +121,13 @@ class StructuralStatus(StrEnum):
     # It is neither present law nor absent law, so it is its own stratum and is held out
     # of the coverage denominator entirely -- scoring it `missing` would invent a gap.
     RESERVED = "reserved"
+    # A section the official source publishes as a heading with NO body at all. Almost
+    # always an undesignated parent whose law lives in its hyphen-suffixed children
+    # (`48 CFR 1.105` is a heading for `1.105-1/-2/-3`), which the dataset does carry.
+    # Like RESERVED it is neither present nor absent law, so it is held out of the
+    # denominator; scoring it `missing` invented a 1,469-section gap in the CFR, 1,056 of
+    # them in title 48 alone, which alone dragged that title from ~99.5% to 89.6%.
+    EMPTY_OFFICIAL_BODY = "empty_official_body"
     DUPLICATE = "duplicate"
     AMBIGUOUS = "ambiguous"
     UNEXPECTED = "unexpected"
@@ -142,6 +171,12 @@ def _content_hash(text: str) -> str:
 def normalize_legal_text(text: str) -> str:
     """Conservative comparison normalization; it does not alter punctuation/case."""
     return " ".join(unicodedata.normalize("NFC", text).split())
+
+
+# The content hash of the empty string. `normalize_legal_text` collapses whitespace, so
+# every whitespace-only official body normalizes to exactly this -- which is what makes
+# `OfficialProvision.empty_body` a verifiable property rather than an assertion.
+_EMPTY_TEXT_SHA256 = _content_hash("")
 
 
 def text_fingerprints(text: str | None) -> tuple[str | None, str | None]:
@@ -210,6 +245,10 @@ class OfficialProvision:
     # *range* of numbers in a single element (`N="102.104-102.109"`), so a reserved key is
     # often not a section number that could ever match a dataset row. See `_ECFR_RESERVED_RE`.
     reserved: bool = False
+    # True when the official source publishes this key with a heading and no body. Derived
+    # in `from_text`, never hand-set, and re-checked below against the stored hash so a
+    # directly-constructed provision cannot lie about it.
+    empty_body: bool = False
 
     def __post_init__(self) -> None:
         if not self.official_id:
@@ -222,6 +261,16 @@ class OfficialProvision:
                 _require_sha256(value, field)
         if (self.raw_text_sha256 is None) != (self.normalized_text_sha256 is None):
             raise ValueError("official raw and normalized text hashes must both be set or null")
+        # `normalize_legal_text` collapses whitespace, so a whitespace-only body normalizes
+        # to "" exactly. That makes `empty_body` a checkable property of the stored hash
+        # rather than a claim, and it keeps null text (text unavailable) distinct from an
+        # empty body (text available and officially empty) -- a null-hashed provision can
+        # never be `empty_body`.
+        if self.empty_body != (self.normalized_text_sha256 == _EMPTY_TEXT_SHA256):
+            raise ValueError(
+                "empty_body must be true exactly when the normalized text hash is the "
+                "hash of the empty string"
+            )
 
     @classmethod
     def from_text(
@@ -234,7 +283,10 @@ class OfficialProvision:
         reserved: bool = False,
     ) -> OfficialProvision:
         raw_hash, normalized_hash = text_fingerprints(text)
-        return cls(key, official_id, source_url, raw_hash, normalized_hash, reserved)
+        empty_body = normalized_hash == _EMPTY_TEXT_SHA256
+        return cls(
+            key, official_id, source_url, raw_hash, normalized_hash, reserved, empty_body
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,6 +465,11 @@ def _structural_status(
         # Reserved regardless of whether the snapshot happens to carry a row for the key:
         # the official source publishes no law here, so there is nothing to be missing.
         return StructuralStatus.RESERVED
+    if official.empty_body:
+        # Checked before `candidates`, exactly as RESERVED is: the official source carries
+        # no law at this key, so the dataset having or lacking a row for it cannot make it
+        # represented or missing.
+        return StructuralStatus.EMPTY_OFFICIAL_BODY
     if not candidates:
         return StructuralStatus.MISSING
     if len(candidates) == 1:
@@ -519,6 +576,7 @@ def _empty_counts() -> dict[str, int]:
         "represented": 0,
         "missing": 0,
         "reserved": 0,
+        "empty_official_body": 0,
         "stale": 0,
         "duplicate": 0,
         "ambiguous": 0,
@@ -538,15 +596,24 @@ def _empty_counts() -> dict[str, int]:
 
 def _add_entry(counts: dict[str, int], entry: CrosswalkEntry) -> None:
     # `expected` is the coverage DENOMINATOR, so it counts official sections that carry
-    # law: reserved placeholders are excluded and tallied in their own `reserved` bucket
-    # (via structural_status below). Including them would understate coverage by ~3.1% of
-    # the CFR -- 6,985 of 227,521 sections at the 2026-08-26 edition.
-    reserved = entry.official is not None and entry.official.reserved
-    if entry.official is not None and not reserved:
+    # law. Two strata of official sections carry none, and each is tallied in its own
+    # bucket (via structural_status below) instead:
+    #
+    #   `reserved`            -- an explicit `[Reserved]` placeholder. 6,993 of 227,521
+    #                            sections at the CFR 2026-08-26 edition.
+    #   `empty_official_body` -- a heading with no body, overwhelmingly an undesignated
+    #                            parent whose law sits in its hyphen-suffixed children.
+    #                            1,469 more sections at the same edition.
+    #
+    # Including either understates coverage. `empty_official_body` was the larger error of
+    # the two in practice: all 1,469 scored `missing`, which is 80% of a 1,843 `missing`
+    # count whose true size is 374.
+    held_out = entry.official is not None and (entry.official.reserved or entry.official.empty_body)
+    if entry.official is not None and not held_out:
         counts["expected"] += 1
     counts[entry.structural_status.value] += 1
-    if reserved:
-        # Reserved entries left `expected`, so they must leave every rate's NUMERATOR too.
+    if held_out:
+        # Held-out entries left `expected`, so they must leave every rate's NUMERATOR too.
         # Counting them as stale produced stale_percent = 200.0000% on a two-entry fixture:
         # a numerator drawn from a larger population than its own denominator.
         return
@@ -731,20 +798,33 @@ def render_markdown(baseline: CoverageBaseline, *, example_limit: int = 12) -> s
         "Currency and text agreement are separate dimensions; therefore a "
         "structurally represented provision can still be stale or text-pending.",
         "",
-        "`reserved` is a **separate stratum held out of `expected`**, so every rate below "
-        "is against sections that carry law. A reserved section is an empty official "
-        "placeholder, not absent law, and eCFR often publishes one element over a whole "
-        "*range* of numbers (`102.104-102.109`), which is not a key any dataset row could "
-        "match -- scoring those `missing` would manufacture a coverage gap that does not "
-        "exist.",
+        "`reserved` and `empty_official_body` are **separate strata held out of "
+        "`expected`**, so every rate below is against sections that carry law. Neither is "
+        "absent law, so scoring either `missing` would manufacture a coverage gap that "
+        "does not exist.",
+        "",
+        "A `reserved` section is an explicit empty official placeholder, and eCFR often "
+        "publishes one element over a whole *range* of numbers (`102.104-102.109`), which "
+        "is not a key any dataset row could ever match.",
+        "",
+        "An `empty_official_body` section is one the official source publishes as a "
+        "heading with no body at all. These are overwhelmingly undesignated *parents*: "
+        "`48 CFR 1.105` is `<HEAD>1.105 Issuance.</HEAD>` and nothing else, because its "
+        "law lives in `1.105-1`, `1.105-2` and `1.105-3` -- which the dataset does carry. "
+        "Across the CFR 2026-08-26 edition 1,309 of 1,469 such sections have "
+        "hyphen-suffixed children in the same official inventory; the remaining 160 are "
+        "heading-only with no children (43 of them FDA animal-drug sections in title 21). "
+        "The distinction is drawn from the official bytes, not inferred: the section "
+        "element's own subtree carries no text.",
         "",
         "## Totals",
         "",
-        "| expected | represented | missing | reserved | stale | duplicate | ambiguous | "
-        "unexpected | exact text | normalized text | mismatch | pending text |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| expected | represented | missing | reserved | empty body | stale | duplicate | "
+        "ambiguous | unexpected | exact text | normalized text | mismatch | pending text |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         f"| {totals['expected']:,} | {totals['represented']:,} | "
-        f"{totals['missing']:,} | {totals['reserved']:,} | {totals['stale']:,} | "
+        f"{totals['missing']:,} | {totals['reserved']:,} | "
+        f"{totals['empty_official_body']:,} | {totals['stale']:,} | "
         f"{totals['duplicate']:,} | {totals['ambiguous']:,} | "
         f"{totals['unexpected']:,} | {totals['exact_text']:,} | "
         f"{totals['normalized_text']:,} | {totals['mismatch_text']:,} | "
@@ -757,8 +837,9 @@ def render_markdown(baseline: CoverageBaseline, *, example_limit: int = 12) -> s
         f"exact text {rates['exact_text_percent']}%, and normalized text "
         f"{rates['normalized_text_percent']}%.",
         "",
-        "Reserved official sections held out of the denominator (empty `[Reserved]` "
-        f"placeholders): **{totals['reserved']:,}**.",
+        "Official sections held out of the denominator because they carry no law: "
+        f"**{totals['reserved']:,}** reserved (`[Reserved]` placeholders) and "
+        f"**{totals['empty_official_body']:,}** empty-bodied (heading only, no text).",
         "",
         "Currency overlays: "
         f"aligned `{totals['aligned_currency']:,}`, stale `{totals['stale']:,}`, "
@@ -769,9 +850,9 @@ def render_markdown(baseline: CoverageBaseline, *, example_limit: int = 12) -> s
         "## By title",
         "",
         "| title | official cutoff | expected | represented | represented % | missing | "
-        "reserved | stale | "
+        "reserved | empty body | stale | "
         "duplicate | ambiguous | unexpected | exact | normalized | mismatch | pending |",
-        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for title in manifest["titles"]:
         counts = title["counts"]
@@ -779,7 +860,8 @@ def render_markdown(baseline: CoverageBaseline, *, example_limit: int = 12) -> s
             f"| {title['title']} | {title['official_legal_content_cutoff'] or 'pending'} | "
             f"{counts['expected']:,} | {counts['represented']:,} | "
             f"{title['rates']['represented_percent'] or 'n/a'} | "
-            f"{counts['missing']:,} | {counts['reserved']:,} | {counts['stale']:,} | "
+            f"{counts['missing']:,} | {counts['reserved']:,} | "
+            f"{counts['empty_official_body']:,} | {counts['stale']:,} | "
             f"{counts['duplicate']:,} | {counts['ambiguous']:,} | "
             f"{counts['unexpected']:,} | {counts['exact_text']:,} | "
             f"{counts['normalized_text']:,} | {counts['mismatch_text']:,} | "
@@ -870,10 +952,11 @@ def official_inventory_dict(inventory: OfficialInventory) -> dict[str, Any]:
                 "source_url": provision.source_url,
                 "raw_text_sha256": provision.raw_text_sha256,
                 "normalized_text_sha256": provision.normalized_text_sha256,
-                # Round-tripped: without it a reloaded inventory loses every reserved flag,
-                # putting empty placeholders back into `expected` to be scored `missing` --
-                # the exact gap the reserved stratum exists to close.
+                # Round-tripped: without these a reloaded inventory loses every held-out
+                # flag, putting placeholders and heading-only parents back into `expected`
+                # to be scored `missing` -- the exact gap these strata exist to close.
                 "reserved": provision.reserved,
+                "empty_body": provision.empty_body,
             }
             for provision in sorted(
                 inventory.provisions, key=lambda item: _entry_sort_key(item.key)
@@ -917,6 +1000,8 @@ def load_official_inventory(path: str | Path) -> OfficialInventory:
             raw_text_sha256=item["raw_text_sha256"],
             normalized_text_sha256=item["normalized_text_sha256"],
             reserved=bool(item["reserved"]),
+            # Indexed, never `.get(...)`: a missing key must raise, not default to False.
+            empty_body=bool(item["empty_body"]),
         )
         for item in raw["provisions"]
     )

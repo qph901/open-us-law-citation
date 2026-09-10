@@ -31,13 +31,27 @@ def test_v202608_currency_registry_uses_corpus_evidence_not_commit_date():
     assert "moving /current/ eCFR URLs" in regulations.basis
 
 
-def test_oracle_candidates_have_stable_provenance_ids_but_are_visibly_unstaged():
+def test_oracle_editions_have_stable_provenance_ids_and_report_staging_honestly():
+    """An edition's provenance id is stable whether or not its bytes are staged, and
+    `staged` reports the registry as it is -- it is never assumed either way.
+
+    The eCFR edition is pinned (all 49 titles at 2026-08-26, `sha256_tree_v1`); the USC
+    edition is not, because OLRC has been unreachable. A pin exists only when BOTH
+    `local_path` and `sha256` are set, so an edition can never look staged on a path alone.
+    """
     manifest = load_oracle_manifest(MANIFEST)
     assert {edition.kind for edition in manifest.editions}
+    by_id = {edition.oracle_edition: edition for edition in manifest.editions}
     for edition in manifest.editions:
-        assert edition.staged is False
+        assert edition.staged is ((edition.local_path is not None) and (edition.sha256 is not None))
         assert edition.provenance_input().input_type == InputType.ORACLE_EDITION
         assert edition.provenance_input().input_id == edition.oracle_edition
+
+    ecfr = by_id["oracle:ecfr:point-in-time:2026-08-26"]
+    assert ecfr.staged is True
+    assert ecfr.local_path == "data/oracles/ecfr-2026-08-26"
+    assert len(ecfr.sha256 or "") == 64
+    assert any(edition.staged is False for edition in manifest.editions)
 
 
 def test_registry_rejects_publication_date_as_legal_content_cutoff():

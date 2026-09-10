@@ -18,8 +18,8 @@
       "kind": "ecfr",
       "edition_date": "2026-08-26",
       "source_url": "https://www.ecfr.gov/api/versioner/v1/full/2026-08-26/title-{title}.xml",
-      "local_path": null,
-      "sha256": null
+      "local_path": "data/oracles/ecfr-2026-08-26",
+      "sha256": "1f8c4bf7ba7bfec19842e8a4b5959d794afc3b5384577c986639b80d22586ccd"
     }
   ],
   "corpora": [

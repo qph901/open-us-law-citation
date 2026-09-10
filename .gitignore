@@ -21,3 +21,9 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Full discrepancy manifests (one JSON record per official provision, ~136 MB for the
+# CFR). Regenerable byte-for-byte from the checksum-pinned oracle + dataset recorded in
+# the committed Markdown scorecard, so the scorecard is the artifact under review and the
+# manifest is a working file. Reproduce with `coverage-baseline compare`.
+reports/COV-1A_*_discrepancies.json
