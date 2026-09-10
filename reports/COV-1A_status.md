@@ -159,9 +159,8 @@ Still open:
 
 - stage and checksum the complete OLRC USLM USC inventory, then run the USC
   crosswalk (blocked on `uscode.house.gov`);
-- inspect the residual CFR unmatched sample: **374** official sections are
-  genuinely missing from the snapshot, and **288 of them (77%) sit in title 7**
-  — a concentration that is itself the next question, not a settled number;
+- ~~inspect the residual CFR unmatched sample~~ — see *What the 374 missing
+  sections are* below; the substantive remainder is **76 sections**;
 - establish or retain pending CFR currency from comparison evidence (the CFR
   cutoff is still `unresolved`, so all 218,690 currency overlays read `pending`
   and the 60.81% exact-text rate is *not* evidence of staleness either way); and
@@ -176,3 +175,55 @@ artifact under review; the manifest is a working file.
 
 The discrepancy strata then become the sample frames for CFR-A1 assembly and
 M0.5B1 USC anatomy, as required by [`PROPOSAL.md`](../PROPOSAL.md).
+
+## What the 374 missing sections are
+
+The residual `missing` count is small enough to characterize completely, so it
+was — by reading what the *official* source publishes at each of the 374 keys:
+
+| what eCFR publishes there | sections |
+|---|---:|
+| a bare cross-reference stub (`See § 1000.3.`) | 289 |
+| substantive regulatory text | 76 |
+| an eCFR amendment banner and nothing else | 9 |
+
+**The dominant class is one shape in one place.** 286 of the 289 stubs are in
+title 7, and 284 of those are in parts 1000-1199, the federal milk marketing
+orders. Those orders are parallel-structured: each one restates the same section
+skeleton, and for the sections that do not vary by order it incorporates the
+general provisions of part 1000 by reference rather than repeating them —
+`§ 1001.3 Route disposition.` has the complete body `See § 1000.3.`
+
+Within parts 1000-1199 the separation is total:
+
+- 720 official sections; **284 missing, and every one of them is a stub**;
+- **zero** missing sections there are anything but a stub;
+- all 284 stubs in those parts are missing — the rate is 100%, not a tendency;
+- part **1000 itself, the target of every reference, is fully present** (34
+  represented, 4 reserved, 0 missing).
+
+The stubs are absent from the snapshot outright, not mis-keyed: a direct lookup
+for `1001.3`, `1001.5`, `1001.40`, `1001.86` returns no row, while `1000.3` and
+`1000.5` are both there. The contrast with represented sections is equally sharp
+— median official body length is **14 characters** for the missing stubs against
+**732** for title 7's 15,881 represented sections, and **0** of those 15,881
+begin with `See §`.
+
+**These are correctly counted as `missing`, and are deliberately not carved into
+a stratum.** That is the difference between this and `reserved` /
+`empty_official_body`: an incorporation by reference *is* operative law.
+`7 CFR 1001.3` is a real, citable provision that says the part 1000 definition
+governs Order 1, so a citation to it must resolve to something, and in this
+snapshot it cannot. The substantive text does sit at the referenced target, which
+bounds how much law is unreachable — but it does not make the key present, and a
+stratum here would be a carve-out for a gap that is genuinely a gap. A stratum is
+warranted only when the official source publishes no law at the key at all.
+
+The remaining **76 substantive** missing sections are spread thin across 15
+titles (27 in title 14, 11 in title 50, 9 in title 25, 8 in title 2) with no
+shared shape found. That is **0.035%** of the 219,064-section denominator, and it
+is the honest floor of unexplained CFR absence at this edition. The 9
+banner-only sections are the eCFR amendment-banner phenomenon CFR-A1 already
+identified inside multi-row groups, appearing here as a whole section body; two
+of them (`7 CFR 984.348`, `984.349`) carry the literal heading `§ 984.348 xxx`
+in the official XML.

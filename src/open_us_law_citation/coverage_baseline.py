@@ -817,6 +817,16 @@ def render_markdown(baseline: CoverageBaseline, *, example_limit: int = 12) -> s
         "The distinction is drawn from the official bytes, not inferred: the section "
         "element's own subtree carries no text.",
         "",
+        "`missing` is a real gap and is never explained away here. At the CFR "
+        "2026-08-26 edition its 374 sections are: 289 bare cross-reference stubs "
+        "(`See § 1000.3.`), 286 of them in title 7 and 284 of those in the federal milk "
+        "marketing orders (parts 1000-1199), where the snapshot carries the referenced "
+        "part 1000 in full but none of the sections that incorporate it; 76 sections of "
+        "substantive text spread across 15 titles; and 9 whose official body is an eCFR "
+        "amendment banner alone. An incorporation by reference is operative law, so those "
+        "stubs stay `missing` rather than becoming a stratum -- see "
+        "`COV-1A_status.md`.",
+        "",
         "## Totals",
         "",
         "| expected | represented | missing | reserved | empty body | stale | duplicate | "

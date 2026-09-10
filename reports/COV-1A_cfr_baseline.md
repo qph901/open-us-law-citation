@@ -28,6 +28,8 @@ A `reserved` section is an explicit empty official placeholder, and eCFR often p
 
 An `empty_official_body` section is one the official source publishes as a heading with no body at all. These are overwhelmingly undesignated *parents*: `48 CFR 1.105` is `<HEAD>1.105 Issuance.</HEAD>` and nothing else, because its law lives in `1.105-1`, `1.105-2` and `1.105-3` -- which the dataset does carry. Across the CFR 2026-08-26 edition 1,309 of 1,469 such sections have hyphen-suffixed children in the same official inventory; the remaining 160 are heading-only with no children (43 of them FDA animal-drug sections in title 21). The distinction is drawn from the official bytes, not inferred: the section element's own subtree carries no text.
 
+`missing` is a real gap and is never explained away here. At the CFR 2026-08-26 edition its 374 sections are: 289 bare cross-reference stubs (`See § 1000.3.`), 286 of them in title 7 and 284 of those in the federal milk marketing orders (parts 1000-1199), where the snapshot carries the referenced part 1000 in full but none of the sections that incorporate it; 76 sections of substantive text spread across 15 titles; and 9 whose official body is an eCFR amendment banner alone. An incorporation by reference is operative law, so those stubs stay `missing` rather than becoming a stratum -- see `COV-1A_status.md`.
+
 ## Totals
 
 | expected | represented | missing | reserved | empty body | stale | duplicate | ambiguous | unexpected | exact text | normalized text | mismatch | pending text |
