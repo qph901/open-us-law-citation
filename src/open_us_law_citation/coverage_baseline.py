@@ -841,9 +841,12 @@ def render_markdown(baseline: CoverageBaseline, *, example_limit: int = 12) -> s
         "but none of the sections that incorporate it; **36** sit in two parts the "
         "snapshot carries under an older numbering (14 CFR 1216, 50 CFR 20); **15** are "
         "terse plain-language answers (`No.`, `60 days.`); **9** have an eCFR amendment "
-        "banner as their whole body; and **15** are substantive text with no explanation "
-        "found. An incorporation by reference is operative law, so the stubs stay "
-        "`missing` rather than becoming a stratum -- see `COV-1A_status.md`.",
+        "banner as their whole body; and **15** carry substantive text that entered the "
+        "CFR between 2026-08-01 and 2026-08-24, in the four weeks before this edition -- "
+        "11 newly added and 4 restored after an earlier removal, each date confirmed "
+        "against the eCFR versioner. **No missing section is unexplained.** An "
+        "incorporation by reference is operative law, so the stubs stay `missing` rather "
+        "than becoming a stratum -- see `COV-1A_status.md`.",
         "",
         "## Totals",
         "",

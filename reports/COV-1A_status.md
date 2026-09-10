@@ -165,7 +165,7 @@ Still open:
 - stage and checksum the complete OLRC USLM USC inventory, then run the USC
   crosswalk (blocked on `uscode.house.gov`);
 - ~~inspect the residual CFR unmatched sample~~ — see *What the 366 missing
-  sections are* below; the unexplained remainder is **15 sections**;
+  sections are* below; **every one is accounted for, none unexplained**;
 - establish or retain pending CFR currency from comparison evidence (the CFR
   cutoff is still `unresolved`, so all 218,690 currency overlays read `pending`
   and the 60.81% exact-text rate is *not* evidence of staleness either way); and
@@ -192,7 +192,7 @@ accounted for:
 | a bare cross-reference stub (`See § 1000.3.`) | 291 |
 | a section in a part the snapshot carries under an older numbering | 36 |
 | a terse plain-language answer (`No.`, `60 days.`) | 15 |
-| substantive text, no explanation found | 15 |
+| substantive text that postdates the snapshot | 15 |
 | an eCFR amendment banner and nothing else | 9 |
 
 ### Cross-reference stubs (291)
@@ -262,19 +262,56 @@ already identified inside multi-row groups, appearing here as a whole section
 body; two of them (`7 CFR 984.348`, `984.349`) carry the literal heading
 `§ 984.348 xxx` in the official XML.
 
-### Substantive, unexplained (15)
+### Postdating the snapshot (15)
 
-Fifteen sections carry real regulatory text, are absent from the snapshot, and
-have no shared shape: 7 in title 2 (`2 CFR 910.200-910.270`, DOE conflict-of-
-interest rules), 2 in title 28, 2 in title 50, and one each in titles 21, 26, 33
-and 40. That is **0.0068%** of the 219,056-section denominator, and it is the
-honest floor of unexplained CFR absence at this edition.
+These carry real regulatory text and are genuinely absent, and every one of the
+15 entered the CFR **between 2026-08-01 and 2026-08-24** — the four weeks before
+the pinned edition. Each date is confirmed against the eCFR versioner
+(`/api/versioner/v1/versions/title-{n}.json`, which returns a per-section
+amendment history):
 
-Two of these were checked for a normalization trap and cleared: `26 CFR 1.987-1T`
-and `33 CFR 165.T07-1030` both carry a temporary-section `T` suffix, but the
-snapshot does carry `1.987-3T`, `-6T`, `-8T` and `165.T07-1111`, so the casefold
-crosswalk handles the suffix and these are true absences. A single expired
-temporary safety zone (`165.T07-1030`) is an ordinary point-in-time artifact.
+| date | section | |
+|---|---|---|
+| 2026-08-01 | `50 CFR 217.90` | restored (removed 2025-02-28) |
+| 2026-08-14 | `33 CFR 165.T07-1030` | new; removed again 2026-09-04 |
+| 2026-08-17 | `2 CFR 910.200`-`910.270` (7) | new — DOE conflict-of-interest rules |
+| 2026-08-17 | `40 CFR 180.1423` | new |
+| 2026-08-19 | `21 CFR 573.302` | new |
+| 2026-08-20 | `50 CFR 17.90` | restored (removed 2022-08-22) |
+| 2026-08-21 | `26 CFR 1.987-1T` | new |
+| 2026-08-24 | `28 CFR 0.70`, `0.71` (2) | restored (removed 2025-12-10) |
+
+Eleven are newly created sections with a single version record. The other four
+looked at first like a contradiction — `28 CFR 0.70` dates to 2016 and
+`50 CFR 217.90` to 2020, so why would the snapshot lack them? Because each was
+**removed and later restored**, and the snapshot was taken inside the gap:
+
+- `28 CFR 0.70` / `0.71` — added 2016-12-19, **removed 2025-12-10**, restored 2026-08-24;
+- `50 CFR 17.90` — added 2021-01-19, **removed 2022-08-22**, restored 2026-08-20;
+- `50 CFR 217.90` — added 2020-03-01, **removed 2025-02-28**, restored 2026-08-01.
+
+So the snapshot is not wrong about any of them. **No missing CFR section is
+unexplained.**
+
+### What this says about the CFR content cutoff
+
+The oracle registry records the CFR `cutoff_status` as `unresolved`, and it stays
+that way here — but these 15 are the first real evidence, and they bracket it:
+
+- **at or after 2025-12-10** — the snapshot lacks `28 CFR 0.70`/`0.71`, which
+  were in force continuously from 2016 until their removal on that date, so the
+  snapshot reflects the removal;
+- **before 2026-08-01** — the snapshot lacks `50 CFR 217.90`, restored on that
+  date.
+
+That is a real bracket, **2025-12-10 ≤ cutoff < 2026-08-01**, and it is
+consistent with the whole missing set: nothing absent here was added before
+2026-08-01. It is **not** enough to promote `cutoff_status`, for a reason worth
+stating plainly — the bracket is derived from the 15 sections that happen to be
+missing, which is a biased sample by construction. Establishing the cutoff needs
+the converse evidence too: the latest amendment the snapshot *does* reflect,
+which is a text comparison over represented sections rather than a presence
+check, and is the natural next measurement.
 
 ### One defect this investigation found and fixed
 
