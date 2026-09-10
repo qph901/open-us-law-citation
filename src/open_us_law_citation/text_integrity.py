@@ -322,6 +322,12 @@ def render_report(files: list[FileIntegrity], snapshot: str) -> str:
           f"{f.repeated_span_rows:,} ({_pct(f.repeated_span_rows, f.checkable_rows)}) | "
           f"{f.repeated_span_blocks:,} | {f.repeated_span_chars:,} |")
     A("")
+    A("A file with **0 checkable rows** is not a clean file: it has no body carrying a "
+      "newline at all, so the separator this detector requires is absent and its rate is "
+      "**unknown**, not zero. Such a corpus can still be damaged in a form this producer "
+      "cannot see. A `0.00%` against a large checkable count is the opposite — a positive "
+      "result, and evidence the detector is not simply firing everywhere.")
+    A("")
     A("This is the dominant cause of COV-1A's 63,224 CFR text mismatches: the row states "
       "part of its own text twice, so nothing is missing and nothing is wrong — it is "
       "said again. Against the pinned eCFR edition the detector scores precision 1.0000 "
