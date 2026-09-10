@@ -97,9 +97,12 @@ officially empty).
 `represented` is deliberately narrow: exactly one Open US Law candidate for the
 official key. Currency and text are separate dimensions, so a structurally
 represented provision can still be `stale`, text-mismatched, or text-pending.
-`stale` is emitted only when both cutoffs are established and the dataset cutoff
-precedes the official title cutoff. An unresolved CFR content cutoff remains
-`pending`; a row's `year` is not silently promoted into a legal-content date.
+`stale` is emitted only from **per-provision** evidence: the provision's own last
+official amendment date (`official_amendment_date`) falls after the snapshot
+cutoff. A corpus-level date gap alone is not staleness and abstains to `pending`
+— see *Why currency still reads `pending` for every provision* below. An
+unresolved content cutoff is likewise `pending`; a row's `year` is never silently
+promoted into a legal-content date.
 
 Text results are `exact`, `normalized_only`, `mismatch`,
 `pending_usc_anatomy`, `pending_cfr_assembly`, or `unavailable`. Normalization is
@@ -166,9 +169,11 @@ Still open:
   crosswalk (blocked on `uscode.house.gov`);
 - ~~inspect the residual CFR unmatched sample~~ — see *What the 366 missing
   sections are* below; **every one is accounted for, none unexplained**;
-- establish or retain pending CFR currency from comparison evidence (the CFR
-  cutoff is still `unresolved`, so all 218,690 currency overlays read `pending`
-  and the 60.81% exact-text rate is *not* evidence of staleness either way); and
+- ~~establish or retain pending CFR currency from comparison evidence~~ — the CFR
+  cutoff is **established at 2026-08-12**; see *The CFR content cutoff,
+  established* below;
+- stage the eCFR versioner as a pinned oracle input so `stale` can be decided per
+  provision rather than abstaining; and
 - commit the byte-stable USC report.
 
 The Markdown scorecards are committed; the full discrepancy manifests are **not**
@@ -293,25 +298,74 @@ looked at first like a contradiction — `28 CFR 0.70` dates to 2016 and
 So the snapshot is not wrong about any of them. **No missing CFR section is
 unexplained.**
 
-### What this says about the CFR content cutoff
+### The CFR content cutoff, established
 
-The oracle registry records the CFR `cutoff_status` as `unresolved`, and it stays
-that way here — but these 15 are the first real evidence, and they bracket it:
+The registry previously recorded the CFR `cutoff_status` as `unresolved`. It is now
+**`established` at 2026-08-12**, with `residual_skew_days = 14` to the 2026-08-26
+oracle edition. Two independent estimators agree, and a third check is consistent.
 
-- **at or after 2025-12-10** — the snapshot lacks `28 CFR 0.70`/`0.71`, which
-  were in force continuously from 2016 until their removal on that date, so the
-  snapshot reflects the removal;
-- **before 2026-08-01** — the snapshot lacks `50 CFR 217.90`, restored on that
-  date.
+**Estimator 1 — removals (pure presence, no text normalization involved).** A
+section removed from the CFR is either still in the snapshot or not, and nothing
+about text formatting can confuse the answer:
 
-That is a real bracket, **2025-12-10 ≤ cutoff < 2026-08-01**, and it is
-consistent with the whole missing set: nothing absent here was added before
-2026-08-01. It is **not** enough to promote `cutoff_status`, for a reason worth
-stating plainly — the bracket is derived from the 15 sections that happen to be
-missing, which is a biased sample by construction. Establishing the cutoff needs
-the converse evidence too: the latest amendment the snapshot *does* reflect,
-which is a text comparison over represented sections rather than a presence
-check, and is the natural next measurement.
+| removed on | titles | sections | still in snapshot |
+|---|---|---:|---|
+| 2026-08-03 … 2026-08-12 | 10, 20, 22, 33, 43, 45, 50 | 70 | **none** — snapshot reflects every one |
+| 2026-08-17 … 2026-08-25 | 14, 15, 45, 47, 50 | 79 | **all but one** — snapshot reflects none |
+
+Title 45 appears on both sides on its own: its 2026-08-10 removals are reflected,
+its 2026-08-17 removals are not. So the cutoff lies in **[2026-08-12, 2026-08-17)**.
+
+**Estimator 2 — text agreement over represented sections.** Grouping the 15,319
+represented sections that were amended since 2025 by amendment date, agreement
+with the official text collapses across the same boundary while the pre-cutoff
+side stays flat:
+
+| amendments after date D | sections | agree | | amendments on/before D | agree |
+|---|---:|---:|---|---|---:|
+| after 2026-07-30 | 581 | 30.6% | | 2026-06-01 … D | 35.3% |
+| after 2026-07-31 | 398 | 15.8% | | | 38.7% |
+| after 2026-08-03 | 306 | 6.9% | | | 39.1% |
+| after 2026-08-10 | 217 | 1.4% | | | 38.1% |
+| after 2026-08-12 | 203 | **0.5%** | | | 37.9% |
+| after 2026-08-21 | 57 | **0.0%** | | | 34.9% |
+
+The flat 34-39% pre-cutoff column is what makes this readable: the corpus's ~30%
+text-mismatch noise is **date-independent**, so the collapse on the other side is
+a currency signal and not an artifact of it.
+
+**Third check.** Of the 8 (re-)addition dates among the missing sections above,
+7 are on or after 2026-08-14. The single exception, `50 CFR 217.90` restored
+2026-08-01 and absent, is an upstream ETL miss rather than a currency effect.
+
+2026-08-12 is recorded as the cutoff because it is the latest date for which the
+snapshot **demonstrably** reflects the CFR, rather than the midpoint of a bracket
+no evidence picks out.
+
+Two localized artifacts do not follow the cutoff and are excluded from it, named
+in the registry basis so they are not silently absorbed: `24 CFR 582`/`583` (50
+sections removed in 2026-05 that the snapshot retains) and the `48 CFR` removals
+of 2026-08-07 (23 of 38 retained — mixed within one title on one date, which a
+cutoff cannot produce).
+
+### Why currency still reads `pending` for every provision
+
+Establishing the cutoff exposed a defect in what `stale` meant. It was a
+comparison of two scalars — snapshot cutoff against the title's official cutoff —
+so promoting the CFR cutoff would have marked **all 217,607** represented
+sections `stale`, a 99.3% headline. Measured against the sections' own amendment
+dates, only **203 (0.09%)** changed in the 14-day window. The blanket flag
+overstates real staleness by roughly **1000x**.
+
+A corpus-level date gap is not per-provision staleness, so `stale` now requires
+the provision's own last official amendment date (`official_amendment_date` on
+`OfficialProvision`) and abstains to `pending` without it — the project's
+"abstain rather than guess" rule applied to currency. The eCFR full-title XML
+does not carry that date; supplying it means staging the eCFR versioner
+(`/versions/title-{n}.json`) and pinning it as its own oracle input, which is the
+next piece of work. The 203 figure above comes from that endpoint but is
+**not** yet a pinned input, so it is reported here as evidence and is not used to
+classify any provision.
 
 ### One defect this investigation found and fixed
 

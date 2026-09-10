@@ -8,13 +8,13 @@
 - Corpus: `cfr`
 - Open US Law snapshot: `v2026.08`
 - Open US Law dataset revision: `16bc9a159faabea4af9db08f1b33832e80e85b2d`
-- Dataset legal-content cutoff: `pending` (`unresolved`)
+- Dataset legal-content cutoff: `2026-08-12` (`established`)
 - Official oracle: `oracle:ecfr:point-in-time:2026-08-26`
 - Oracle edition date: `2026-08-26`
 - Oracle source: `https://www.ecfr.gov/api/versioner/v1/full/2026-08-26/title-{title}.xml`
 - Oracle source SHA-256: `1f8c4bf7ba7bfec19842e8a4b5959d794afc3b5384577c986639b80d22586ccd`
 - Oracle source hash method: `sha256_tree_v1`
-- Normalized inventory SHA-256: `c090e6af93c754eca8132d9d60342f912471c7636def67aebdd58405d096087e`
+- Normalized inventory SHA-256: `f598213bee35a0690eddcb762f8bac343cbf54f813fc40b4fba7aa78fd8eda52`
 - Dataset file: `us_federal_regulations.parquet`
 - Dataset file SHA-256: `6d9bcda025dc9eeeaa1361a8317369899cd87751e4eaa4095049518e611ad26e`
 - Crosswalk: `canonical_title_section_v1` over `(US, corpus, title, section)`
@@ -29,6 +29,8 @@ A `reserved` section is an explicit empty official placeholder, and eCFR often p
 An `empty_official_body` section is one the official source publishes as a heading with no body at all. These are overwhelmingly undesignated *parents*: `48 CFR 1.105` is `<HEAD>1.105 Issuance.</HEAD>` and nothing else, because its law lives in `1.105-1`, `1.105-2` and `1.105-3` -- which the dataset does carry. Across the CFR 2026-08-26 edition 1,309 of 1,469 such sections have hyphen-suffixed children in the same official inventory; the remaining 160 are heading-only with no children (43 of them FDA animal-drug sections in title 21). The distinction is drawn from the official bytes, not inferred: the section element's own subtree carries no text.
 
 `missing` is a real gap and is never explained away here. At the CFR 2026-08-26 edition all 366 are accounted for: **291** are bare cross-reference stubs (`See § 1000.3.`), 284 of them in the federal milk marketing orders (title 7, parts 1000-1199), where the snapshot carries the referenced part 1000 in full but none of the sections that incorporate it; **36** sit in two parts the snapshot carries under an older numbering (14 CFR 1216, 50 CFR 20); **15** are terse plain-language answers (`No.`, `60 days.`); **9** have an eCFR amendment banner as their whole body; and **15** carry substantive text that entered the CFR between 2026-08-01 and 2026-08-24, in the four weeks before this edition -- 11 newly added and 4 restored after an earlier removal, each date confirmed against the eCFR versioner. **No missing section is unexplained.** An incorporation by reference is operative law, so the stubs stay `missing` rather than becoming a stratum -- see `COV-1A_status.md`.
+
+Currency reads `pending` for every represented provision even though the snapshot cutoff is established. That is deliberate. The cutoff is a corpus-level date, and a date gap is not per-provision staleness: the CFR snapshot cutoff of 2026-08-12 precedes this 2026-08-26 edition by 14 days, but only **203** of the 217,607 represented sections were actually amended inside that window, so flagging all of them `stale` would overstate real staleness by roughly 1000x. `stale` requires the provision's own last official amendment date, which the eCFR full-title XML does not carry -- it needs the versioner (`/versions/title-{n}.json`) staged and pinned as its own oracle input. Until then currency abstains and the skew is reported here instead.
 
 ## Totals
 

@@ -181,8 +181,9 @@ def test_currency_and_usc_anatomy_are_independent_pending_dimensions():
         "official operative text\nEditorial Notes: ...",
         ordinal=1,
     )
+    dated = replace(provision, official_amendment_date="2026-01-02")
     stale = build_baseline(
-        _inventory(FederalCorpus.USC, (provision,), cutoff="2026-01-02"),
+        _inventory(FederalCorpus.USC, (dated,), cutoff="2026-01-02"),
         inventory_sha256="c" * 64,
         candidates=(candidate,),
         dataset=_evidence(cutoff="2026-01-01"),
@@ -1209,3 +1210,64 @@ def test_ecfr_projection_finds_a_reserved_marker_that_landed_in_the_body(tmp_pat
     # ... and a section that merely CONTAINS a reserved subsection keeps its law.
     assert by_section["1542.7"].reserved is False
     assert by_section["1542.7"].empty_body is False
+
+
+def test_a_corpus_level_date_gap_is_not_per_provision_staleness():
+    """Establishing the CFR cutoff at 2026-08-12 against a 2026-08-26 edition would have
+    marked all 217,607 represented sections `stale`. Only 203 (0.09%) were actually
+    amended in that window -- a ~1000x overstatement. Without a per-provision date the
+    honest answer is that this provision's currency cannot be certified, so currency
+    abstains and the skew is reported separately."""
+    provision = _official(FederalCorpus.CFR, "1.1", "official text")
+    baseline = build_baseline(
+        _inventory(FederalCorpus.CFR, (provision,), cutoff="2026-08-26"),
+        inventory_sha256=SHA_B,
+        candidates=(_candidate(FederalCorpus.CFR, "1.1", "official text", ordinal=1),),
+        dataset=_evidence(cutoff="2026-08-12"),
+    )
+    entry = baseline.entries[0]
+    assert entry.currency_status == CurrencyStatus.PENDING
+    assert entry.currency_status != CurrencyStatus.STALE
+    counts = coverage_counts(baseline.entries)
+    assert counts["stale"] == 0 and counts["pending_currency"] == 1
+
+
+@pytest.mark.parametrize(
+    ("amended", "dataset_cutoff", "expected"),
+    [
+        ("2026-08-20", "2026-08-12", CurrencyStatus.STALE),    # changed after the snapshot
+        ("2026-08-12", "2026-08-12", CurrencyStatus.ALIGNED),  # changed on the boundary
+        ("2026-01-05", "2026-08-12", CurrencyStatus.ALIGNED),  # long settled
+    ],
+)
+def test_a_per_provision_amendment_date_decides_staleness(
+    amended: str, dataset_cutoff: str, expected: CurrencyStatus
+):
+    """With the provision's own last official amendment, `stale` means what it says:
+    this section changed after the snapshot was taken."""
+    provision = replace(
+        _official(FederalCorpus.CFR, "1.1", "official text"),
+        official_amendment_date=amended,
+    )
+    entry = build_baseline(
+        _inventory(FederalCorpus.CFR, (provision,), cutoff="2026-08-26"),
+        inventory_sha256=SHA_B,
+        candidates=(_candidate(FederalCorpus.CFR, "1.1", "official text", ordinal=1),),
+        dataset=_evidence(cutoff=dataset_cutoff),
+    ).entries[0]
+    assert entry.currency_status == expected
+
+
+def test_official_amendment_date_round_trips_and_must_be_a_date(tmp_path: Path):
+    with pytest.raises(ValueError, match="official_amendment_date"):
+        replace(_official(FederalCorpus.CFR, "1.1", "t"), official_amendment_date="Aug 2026")
+    inventory = _inventory(
+        FederalCorpus.CFR,
+        (replace(_official(FederalCorpus.CFR, "1.1", "t"), official_amendment_date="2026-08-20"),
+         _official(FederalCorpus.CFR, "1.2", "u")),
+    )
+    path = tmp_path / "inv.json"
+    path.write_text(render_official_inventory(inventory), encoding="utf-8")
+    reloaded = load_official_inventory(path)
+    got = {p.key.section: p.official_amendment_date for p in reloaded.provisions}
+    assert got == {"1.1": "2026-08-20", "1.2": None}

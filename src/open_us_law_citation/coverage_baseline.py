@@ -40,12 +40,14 @@ from .source_record import (
     file_sha256,
 )
 
+# 3: adds `official_amendment_date`, the per-provision date that makes `stale` mean
+# per-provision staleness instead of a corpus-level date gap.
 # 2: adds the `empty_official_body` stratum. A v1 inventory has no `empty_body` field, so
 # reloading one would silently put 1,469 CFR heading-only sections back into `expected` to
 # be scored `missing` -- the very gap this version closes. The loader rejects v1 outright
 # rather than defaulting the field, because a quiet default is how a stale inventory ships
 # a plausible wrong number.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MATCH_METHOD = "canonical_title_section_v1"
 TEXT_NORMALIZATION = "unicode_nfc_whitespace_v1"
 # Bump this whenever the official text projection changes what it hashes. A saved
@@ -266,6 +268,11 @@ class OfficialProvision:
     # in `from_text`, never hand-set, and re-checked below against the stored hash so a
     # directly-constructed provision cannot lie about it.
     empty_body: bool = False
+    # This provision's own last official amendment date, when the oracle supplies one.
+    # `None` means the oracle carries no per-provision date -- the eCFR full-title XML
+    # does not, so establishing it needs the versioner (`/versions/title-{n}.json`)
+    # staged and pinned as its own oracle input. Currency abstains while it is None.
+    official_amendment_date: str | None = None
 
     def __post_init__(self) -> None:
         if not self.official_id:
@@ -283,6 +290,8 @@ class OfficialProvision:
         # rather than a claim, and it keeps null text (text unavailable) distinct from an
         # empty body (text available and officially empty) -- a null-hashed provision can
         # never be `empty_body`.
+        if self.official_amendment_date is not None:
+            _iso_date(self.official_amendment_date, "official_amendment_date")
         if self.empty_body != (self.normalized_text_sha256 == _EMPTY_TEXT_SHA256):
             raise ValueError(
                 "empty_body must be true exactly when the normalized text hash is the "
@@ -508,10 +517,23 @@ def _currency_status(
         return CurrencyStatus.NOT_APPLICABLE
     if dataset_cutoff is None or official_cutoff is None:
         return CurrencyStatus.PENDING
+    if official.official_amendment_date is not None:
+        # Per-provision evidence: this section's own last official amendment. Only this
+        # can call a single provision stale.
+        if official.official_amendment_date > dataset_cutoff:
+            return CurrencyStatus.STALE
+        return CurrencyStatus.ALIGNED
     if dataset_cutoff == official_cutoff:
         return CurrencyStatus.ALIGNED
     if dataset_cutoff < official_cutoff:
-        return CurrencyStatus.STALE
+        # A corpus-level date gap is NOT per-provision staleness, and must not be
+        # reported as it. Establishing the CFR cutoff at 2026-08-12 against a 2026-08-26
+        # edition would otherwise have marked all 217,607 represented sections `stale`;
+        # only 203 of them (0.09%) were actually amended in that window. Abstain instead,
+        # and report the skew separately -- the oracle registry's own CFR basis requires
+        # exactly that. STALE becomes reachable again once the oracle supplies
+        # `official_amendment_date` per provision.
+        return CurrencyStatus.PENDING
     return CurrencyStatus.AHEAD_OF_ORACLE
 
 
@@ -848,6 +870,17 @@ def render_markdown(baseline: CoverageBaseline, *, example_limit: int = 12) -> s
         "incorporation by reference is operative law, so the stubs stay `missing` rather "
         "than becoming a stratum -- see `COV-1A_status.md`.",
         "",
+        "Currency reads `pending` for every represented provision even though the "
+        "snapshot cutoff is established. That is deliberate. The cutoff is a corpus-level "
+        "date, and a date gap is not per-provision staleness: the CFR snapshot cutoff of "
+        "2026-08-12 precedes this 2026-08-26 edition by 14 days, but only **203** of the "
+        "217,607 represented sections were actually amended inside that window, so "
+        "flagging all of them `stale` would overstate real staleness by roughly 1000x. "
+        "`stale` requires the provision's own last official amendment date, which the "
+        "eCFR full-title XML does not carry -- it needs the versioner "
+        "(`/versions/title-{n}.json`) staged and pinned as its own oracle input. Until "
+        "then currency abstains and the skew is reported here instead.",
+        "",
         "## Totals",
         "",
         "| expected | represented | missing | reserved | empty body | stale | duplicate | "
@@ -988,6 +1021,7 @@ def official_inventory_dict(inventory: OfficialInventory) -> dict[str, Any]:
                 # to be scored `missing` -- the exact gap these strata exist to close.
                 "reserved": provision.reserved,
                 "empty_body": provision.empty_body,
+                "official_amendment_date": provision.official_amendment_date,
             }
             for provision in sorted(
                 inventory.provisions, key=lambda item: _entry_sort_key(item.key)
@@ -1033,6 +1067,7 @@ def load_official_inventory(path: str | Path) -> OfficialInventory:
             reserved=bool(item["reserved"]),
             # Indexed, never `.get(...)`: a missing key must raise, not default to False.
             empty_body=bool(item["empty_body"]),
+            official_amendment_date=item["official_amendment_date"],
         )
         for item in raw["provisions"]
     )

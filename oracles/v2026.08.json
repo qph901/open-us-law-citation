@@ -33,11 +33,11 @@
     },
     {
       "corpus": "us_federal_regulations",
-      "snapshot_content_cutoff": null,
-      "cutoff_status": "unresolved",
-      "basis": "No global legal-content cutoff can be established from this mixed corpus. Its 220,018 CFR rows carry source years 2024 (511), 2025 (6,153), and 2026 (213,354) and use moving /current/ eCFR URLs; its 362,036 Federal Register rows carry publication years 1994-2026. A row year is not a legal-content cutoff. The 2026-08-26 repository commit date is publication metadata and is not used as a cutoff. CFR-A1 must compare the CFR subset with the point-in-time eCFR candidate and report residual skew separately; Federal Register rows remain non-composable historical documents.",
+      "snapshot_content_cutoff": "2026-08-12",
+      "cutoff_status": "established",
+      "basis": "Established from the pinned 2026-08-26 eCFR edition by two independent estimators that agree, replacing the earlier unresolved status. (1) Removals, a pure presence test with no text normalization: every section removed from the CFR on or before 2026-08-12 is absent from the snapshot (70 sections across titles 10, 20, 22, 33, 43, 45, 50), and every section removed on or after 2026-08-17 is still present in it (79 sections across titles 14, 15, 45, 47, 50). Title 45 straddles both dates on its own. (2) Text agreement over represented sections: agreement with the official text holds at its ~35% baseline for amendments through 2026-07-30 and collapses to 0.49% for amendments after 2026-08-12 and 0.00% after 2026-08-21, while the pre-cutoff side stays flat at 34-39% throughout, showing the ~30% text-mismatch noise is date-independent. A third check agrees: 7 of the 8 missing sections that postdate the snapshot entered the CFR on or after 2026-08-14. The cutoff therefore sits in [2026-08-12, 2026-08-17); 2026-08-12 is recorded as the latest date for which the snapshot demonstrably reflects the CFR. residual_skew_days is the 14-day gap to the 2026-08-26 oracle edition. Only 203 represented sections (0.09%) were amended in that window, so a blanket stale flag would overstate real staleness ~1000x; per-provision currency abstains until official_amendment_date is staged from the eCFR versioner. Federal Register rows remain non-composable historical documents and carry no cutoff. Two localized ETL artifacts do not follow the cutoff and are excluded from it: 24 CFR 582/583 (50 sections removed 2026-05 but retained) and 48 CFR removals of 2026-08-07 (23 of 38 retained).",
       "comparison_oracle_edition": "oracle:ecfr:point-in-time:2026-08-26",
-      "residual_skew_days": null
+      "residual_skew_days": 14
     }
   ]
 }

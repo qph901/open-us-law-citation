@@ -25,10 +25,15 @@ def test_v202608_currency_registry_uses_corpus_evidence_not_commit_date():
     assert "USCODE-2024" in statutes.basis
 
     regulations = corpora["us_federal_regulations"]
-    assert regulations.cutoff_status == CutoffStatus.UNRESOLVED
-    assert regulations.snapshot_content_cutoff is None
-    assert regulations.residual_skew_days is None
-    assert "moving /current/ eCFR URLs" in regulations.basis
+    # Established from the pinned 2026-08-26 eCFR edition: removals through 2026-08-12 are
+    # reflected in the snapshot and removals from 2026-08-17 are not, and text agreement
+    # over represented sections collapses across the same boundary.
+    assert regulations.cutoff_status == CutoffStatus.ESTABLISHED
+    assert regulations.snapshot_content_cutoff == "2026-08-12"
+    assert regulations.residual_skew_days == 14
+    assert "removed from the CFR on or before 2026-08-12" in regulations.basis
+    # The basis must keep saying why a blanket stale flag is wrong here.
+    assert "203 represented sections" in regulations.basis
 
 
 def test_oracle_editions_have_stable_provenance_ids_and_report_staging_honestly():
