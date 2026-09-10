@@ -22,6 +22,13 @@ corpus-wide, never the other way round:
 * **corrupt cross-reference** — the dataset's own `cross_references_usc` naming a US Code
   title that does not exist (1-54), i.e. the damage propagating out of the text into the
   extracted fields.
+* **repeated span** — a block of 395-402 characters stated twice, back to back across a
+  newline, 89% of the time starting mid-sentence and sometimes mid-word. This is the
+  dominant cause of COV-1A's 63,224 CFR text mismatches, and measuring it here is the
+  point: against the eCFR oracle it scores precision 1.0000 / recall 0.9980 on a balanced
+  993-section sample, so it can be trusted on the corpora that have **no** oracle and, for
+  most states, never will. Detection is :mod:`.derived.text_integrity`; this harness only
+  counts what that producer finds, so the rate and the artifact can never disagree.
 
 Memory: aggregates run in DuckDB under a hard ``--memory-limit`` with disk spill, so the
 ~11 GB regulations ``text`` column streams and never materialises a row-group (CLAUDE.md).
@@ -45,6 +52,11 @@ from pathlib import Path
 from typing import Sequence
 
 import duckdb
+
+from .derived.text_integrity import (
+    MIN_REPEAT_LENGTH,
+    detect_repeated_spans,
+)
 
 # RE2, evaluated inside DuckDB.
 _LOWER_START = r"^[a-z]"
@@ -74,8 +86,16 @@ class FileIntegrity:
     ui_chrome: int = 0
     impossible_title_cites: int = 0
     corrupt_xref_titles: int = 0
+    # A row can only carry a repeat if it is long enough to hold two copies plus the
+    # separator, so `checkable` is the honest denominator for the repeated-span rate --
+    # scoring it against every row would dilute it with rows the defect cannot reach.
+    checkable_rows: int = 0
+    repeated_span_rows: int = 0
+    repeated_span_blocks: int = 0
+    repeated_span_chars: int = 0
     truncated_examples: list[tuple[str, str]] = field(default_factory=list)
     chrome_examples: list[tuple[str, str]] = field(default_factory=list)
+    repeat_examples: list[tuple[str, int, int]] = field(default_factory=list)
 
 
 def _connect(memory_limit: str, temp_dir: Path | None) -> duckdb.DuckDBPyConnection:
@@ -115,11 +135,70 @@ LIMIT {limit}
 """
 
 
+# A repeat needs two copies plus the separator, so a shorter body cannot hold one and a
+# body with no newline cannot either. Both are exact preconditions of the detector, not
+# heuristics, so this filter changes the cost and never the answer -- and it keeps the
+# streamed batches small on the 11 GB regulations column.
+_REPEAT_SCAN_SQL = """
+SELECT act_id,
+       CASE WHEN text IS NOT NULL
+                 AND length(text) >= ?
+                 AND contains(text, chr(10))
+            THEN text END AS body
+FROM read_parquet(?)
+"""
+
+_REPEAT_EXAMPLE_LIMIT = 8
+
+
+def _scan_repeated_spans(
+    con: duckdb.DuckDBPyConnection, path: Path, rows_per_batch: int
+) -> tuple[int, int, int, int, list[tuple[str, int, int]]]:
+    """Stream the text column through the repeated-span producer.
+
+    Never materialises a row-group: DuckDB streams ``text`` in vectors and this pulls a
+    bounded list of *eligible* bodies at a time (CLAUDE.md's OOM invariant). Examples are
+    the lexicographically smallest act_ids among the hits, so the report is byte-stable
+    under any scan order, thread count, or batch size.
+    """
+    checkable = hit_rows = blocks = chars = 0
+    examples: list[tuple[str, int, int]] = []
+    # ``fetchmany`` over the streaming result, not ``to_arrow_reader``: the eligibility
+    # filter below is barely a filter (most bodies are long and contain a newline), so
+    # nearly the whole ~11 GB text column flows through here. An Arrow reader buffers
+    # whole batches per column and OOM-killed a 14 GB box at 64 rows/batch; fetchmany
+    # hands back one small list of Python strings at a time, which is dropped before the
+    # next arrives.
+    result = con.execute(_REPEAT_SCAN_SQL, [2 * MIN_REPEAT_LENGTH + 1, path.as_posix()])
+    while True:
+        rows = result.fetchmany(rows_per_batch)
+        if not rows:
+            break
+        for act_id, body in rows:
+            if body is None:
+                continue
+            checkable += 1
+            spans = detect_repeated_spans(body)
+            if not spans:
+                continue
+            hit_rows += 1
+            blocks += len(spans)
+            total = sum(span.length for span in spans)
+            chars += total
+            if len(examples) < _REPEAT_EXAMPLE_LIMIT or act_id < examples[-1][0]:
+                examples.append((act_id, len(spans), total))
+                examples.sort()
+                del examples[_REPEAT_EXAMPLE_LIMIT:]
+        del rows
+    return checkable, hit_rows, blocks, chars, examples
+
+
 def scan_file(
     path: str | Path,
     *,
     memory_limit: str = "3GB",
     temp_dir: Path | None = None,
+    rows_per_batch: int = 128,
 ) -> FileIntegrity:
     path = Path(path)
     p = path.as_posix()
@@ -142,6 +221,9 @@ def scan_file(
                                predicate=f"text LIKE '%{_ECFR_BANNER}%'"),
             [p],
         ).fetchall()
+        checkable, repeat_rows, repeat_blocks, repeat_chars, repeat_examples = (
+            _scan_repeated_spans(con, path, rows_per_batch)
+        )
     finally:
         con.close()
     return FileIntegrity(
@@ -149,8 +231,13 @@ def scan_file(
         rows=int(counts[0]), non_null_text=int(counts[1]),
         truncated_head=int(counts[2]), ui_chrome=int(counts[3]),
         impossible_title_cites=int(counts[4]), corrupt_xref_titles=int(xref),
+        checkable_rows=checkable,
+        repeated_span_rows=repeat_rows,
+        repeated_span_blocks=repeat_blocks,
+        repeated_span_chars=repeat_chars,
         truncated_examples=[(a, t) for a, t in trunc],
         chrome_examples=[(a, t) for a, t in chrome],
+        repeat_examples=repeat_examples,
     )
 
 
@@ -220,6 +307,38 @@ def render_report(files: list[FileIntegrity], snapshot: str) -> str:
       "website furniture captured as legal text. `impossible-title citation` = a digit run "
       "adjacent to a code token straight after a newline (`\\n0 CFR 264.100`, really 40 CFR).")
     A("")
+    A("## Repeated spans")
+    A("")
+    A("A block of 395-402 characters stated **twice, back to back across a newline**. "
+      "`checkable` is rows long enough to hold two copies plus the separator and "
+      "containing a newline — the exact precondition for the defect, so it is the "
+      "denominator the rate is against; scoring it against every row would dilute it "
+      "with rows the defect cannot reach.")
+    A("")
+    A("| file | checkable rows | rows with a repeated span | blocks | repeated characters |")
+    A("|---|---:|---:|---:|---:|")
+    for f in files:
+        A(f"| {f.corpus_file} | {f.checkable_rows:,} | "
+          f"{f.repeated_span_rows:,} ({_pct(f.repeated_span_rows, f.checkable_rows)}) | "
+          f"{f.repeated_span_blocks:,} | {f.repeated_span_chars:,} |")
+    A("")
+    A("This is the dominant cause of COV-1A's 63,224 CFR text mismatches: the row states "
+      "part of its own text twice, so nothing is missing and nothing is wrong — it is "
+      "said again. Against the pinned eCFR edition the detector scores precision 1.0000 "
+      "and recall 0.9980 on a balanced 993-section sample with **zero false positives**, "
+      "which is what licenses reading the rates above for corpora that have no official "
+      "oracle at all. `repeated characters` counts the surplus copies (a block appearing "
+      "N times contributes N-1), and is an observation, not a claim about how much text "
+      "a repair would remove.")
+    A("")
+    for f in files:
+        if not f.repeat_examples:
+            continue
+        A(f"Examples — {f.corpus_file} (smallest `act_id`s among the hits):")
+        A("")
+        for act_id, blocks, chars in f.repeat_examples:
+            A(f"- `{act_id}` — {blocks} block(s), {chars:,} repeated characters")
+        A("")
     A("## Damage that reached the extracted fields")
     A("")
     A("Rows whose own `cross_references_usc` names a US Code title that does not exist "
@@ -264,13 +383,18 @@ def main(argv: Sequence[str] | None = None) -> None:
                     help="DuckDB hard memory limit (spills to --temp-dir beyond this).")
     ap.add_argument("--temp-dir", type=Path, default=Path(".duckdb_spill"),
                     help="scratch directory for DuckDB spill files.")
+    ap.add_argument("--rows-per-batch", type=int, default=128,
+                    help="rows per streamed Arrow batch for the repeated-span scan; "
+                         "lower it if bodies are very large.")
     args = ap.parse_args(argv)
 
     paths = sorted({Path(p) for pat in args.paths for p in globlib.glob(pat)})
     files = []
     for path in paths:
         print(f"scanning {path.name} ...", flush=True)
-        files.append(scan_file(path, memory_limit=args.memory_limit, temp_dir=args.temp_dir))
+        files.append(scan_file(path, memory_limit=args.memory_limit,
+                               temp_dir=args.temp_dir,
+                               rows_per_batch=args.rows_per_batch))
     report = render_report(files, args.snapshot)
     if args.out:
         Path(args.out).write_text(report)
