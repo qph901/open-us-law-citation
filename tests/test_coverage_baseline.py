@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from open_us_law_citation.coverage_baseline import (
+    _ECFR_RESERVED_BODY_RE,
     _ECFR_RESERVED_RE,
     TITLE_MAX,
     CurrencyStatus,
@@ -1147,3 +1148,64 @@ def test_ecfr_projection_marks_heading_only_parents_as_empty(tmp_path: Path):
     assert by_section["1.105"].reserved is False    # empty, but not a placeholder
     assert by_section["1.105-1"].empty_body is False
     assert by_section["1.105-2"].empty_body is False
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "[Reserved]",                          # 2 CFR 700.0
+        "§ 1542.5   [Reserved]",               # 49 CFR 1542.5 (degenerate <HEAD>)
+        "908.7115-908.7117   [Reserved]",      # 48 CFR, a range, no section sign
+        "  [Reserved].  ",                     # surrounding whitespace, trailing period
+    ],
+)
+def test_a_body_that_is_only_a_reserved_marker_counts_as_reserved(body: str):
+    assert _ECFR_RESERVED_BODY_RE.fullmatch(body.strip()) is not None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "(a) [Reserved] (b) The Administrator shall publish a notice.",
+        "[Reserved] for future use by the Secretary.",
+        "The requirements of paragraph (c) [Reserved] do not apply.",
+        "See § 1000.3.",
+        "No.",
+        "Reserved parking is prohibited.",
+    ],
+)
+def test_a_body_containing_a_reserved_subsection_is_still_law(body: str):
+    """This pattern must FULL-match, never search: thousands of sections full of law
+    contain a reserved *subsection*, and swallowing them would delete real provisions
+    from the denominator."""
+    assert _ECFR_RESERVED_BODY_RE.fullmatch(body.strip()) is None
+
+
+def test_ecfr_projection_finds_a_reserved_marker_that_landed_in_the_body(tmp_path: Path):
+    """49 CFR 1542.5 is `<HEAD>§ 1542.5</HEAD>` with the heading line pushed into the body.
+    Reading only <HEAD> scored all 8 such sections `missing` -- reporting absent law where
+    the official source says the opposite."""
+    source = tmp_path / "title-49.xml"
+    source.write_text(
+        """<ECFR TITLE="49"><DIV5 TYPE="PART" N="1542">
+        <DIV8 TYPE="SECTION" N="1542.5"><HEAD>§ 1542.5</HEAD>
+        <P>§ 1542.5   [Reserved]</P></DIV8>
+        <DIV8 TYPE="SECTION" N="1542.7"><HEAD>§ 1542.7 Inspections.</HEAD>
+        <P>(a) [Reserved]</P><P>(b) Each airport operator must allow inspection.</P></DIV8>
+        </DIV5></ECFR>"""
+    )
+    inventory = inventory_from_xml(
+        source_path=source,
+        corpus=FederalCorpus.CFR,
+        oracle_edition="oracle:test:ecfr",
+        oracle_kind=OracleKind.ECFR,
+        edition_date="2026-08-26",
+        source_url="https://official.example/title-{title}.xml",
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        currency_basis="point-in-time eCFR fixture",
+    )
+    by_section = {p.key.section: p for p in inventory.provisions}
+    assert by_section["1542.5"].reserved is True
+    # ... and a section that merely CONTAINS a reserved subsection keeps its law.
+    assert by_section["1542.7"].reserved is False
+    assert by_section["1542.7"].empty_body is False

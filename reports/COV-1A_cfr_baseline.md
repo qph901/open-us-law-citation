@@ -14,7 +14,7 @@
 - Oracle source: `https://www.ecfr.gov/api/versioner/v1/full/2026-08-26/title-{title}.xml`
 - Oracle source SHA-256: `1f8c4bf7ba7bfec19842e8a4b5959d794afc3b5384577c986639b80d22586ccd`
 - Oracle source hash method: `sha256_tree_v1`
-- Normalized inventory SHA-256: `0e32777039293507923f99f6dba65091b4d52466f0705998acff13f1187f4778`
+- Normalized inventory SHA-256: `c090e6af93c754eca8132d9d60342f912471c7636def67aebdd58405d096087e`
 - Dataset file: `us_federal_regulations.parquet`
 - Dataset file SHA-256: `6d9bcda025dc9eeeaa1361a8317369899cd87751e4eaa4095049518e611ad26e`
 - Crosswalk: `canonical_title_section_v1` over `(US, corpus, title, section)`
@@ -28,26 +28,26 @@ A `reserved` section is an explicit empty official placeholder, and eCFR often p
 
 An `empty_official_body` section is one the official source publishes as a heading with no body at all. These are overwhelmingly undesignated *parents*: `48 CFR 1.105` is `<HEAD>1.105 Issuance.</HEAD>` and nothing else, because its law lives in `1.105-1`, `1.105-2` and `1.105-3` -- which the dataset does carry. Across the CFR 2026-08-26 edition 1,309 of 1,469 such sections have hyphen-suffixed children in the same official inventory; the remaining 160 are heading-only with no children (43 of them FDA animal-drug sections in title 21). The distinction is drawn from the official bytes, not inferred: the section element's own subtree carries no text.
 
-`missing` is a real gap and is never explained away here. At the CFR 2026-08-26 edition its 374 sections are: 289 bare cross-reference stubs (`See § 1000.3.`), 286 of them in title 7 and 284 of those in the federal milk marketing orders (parts 1000-1199), where the snapshot carries the referenced part 1000 in full but none of the sections that incorporate it; 76 sections of substantive text spread across 15 titles; and 9 whose official body is an eCFR amendment banner alone. An incorporation by reference is operative law, so those stubs stay `missing` rather than becoming a stratum -- see `COV-1A_status.md`.
+`missing` is a real gap and is never explained away here. At the CFR 2026-08-26 edition all 366 are accounted for: **291** are bare cross-reference stubs (`See § 1000.3.`), 284 of them in the federal milk marketing orders (title 7, parts 1000-1199), where the snapshot carries the referenced part 1000 in full but none of the sections that incorporate it; **36** sit in two parts the snapshot carries under an older numbering (14 CFR 1216, 50 CFR 20); **15** are terse plain-language answers (`No.`, `60 days.`); **9** have an eCFR amendment banner as their whole body; and **15** are substantive text with no explanation found. An incorporation by reference is operative law, so the stubs stay `missing` rather than becoming a stratum -- see `COV-1A_status.md`.
 
 ## Totals
 
 | expected | represented | missing | reserved | empty body | stale | duplicate | ambiguous | unexpected | exact text | normalized text | mismatch | pending text |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 219,064 | 217,607 | 374 | 6,993 | 1,464 | 0 | 232 | 851 | 165 | 133,218 | 154,383 | 63,224 | 1,083 |
+| 219,056 | 217,607 | 366 | 7,001 | 1,464 | 0 | 232 | 851 | 165 | 133,218 | 154,383 | 63,224 | 1,083 |
 
-Official-denominator rates: **structurally represented 99.3349%**, missing 0.1707%, duplicate 0.1059%, ambiguous 0.3885%, stale 0.0000%, exact text 60.8124%, and normalized text 70.4739%.
+Official-denominator rates: **structurally represented 99.3385%**, missing 0.1671%, duplicate 0.1059%, ambiguous 0.3885%, stale 0.0000%, exact text 60.8146%, and normalized text 70.4765%.
 
-Official sections held out of the denominator because they carry no law: **6,993** reserved (`[Reserved]` placeholders) and **1,464** empty-bodied (heading only, no text).
+Official sections held out of the denominator because they carry no law: **7,001** reserved (`[Reserved]` placeholders) and **1,464** empty-bodied (heading only, no text).
 
-Currency overlays: aligned `0`, stale `0`, ahead of oracle `0`, pending `218,690`, not applicable `539`.
+Currency overlays: aligned `0`, stale `0`, ahead of oracle `0`, pending `218,690`, not applicable `531`.
 
 ## By title
 
 | title | official cutoff | expected | represented | represented % | missing | reserved | empty body | stale | duplicate | ambiguous | unexpected | exact | normalized | mismatch | pending |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 1 | 2026-08-26 | 271 | 271 | 100.0000 | 0 | 17 | 0 | 0 | 0 | 0 | 0 | 210 | 210 | 61 | 0 |
-| 2 | 2026-08-26 | 1,507 | 1,498 | 99.4028 | 9 | 15 | 0 | 0 | 0 | 0 | 0 | 1,319 | 1,322 | 176 | 0 |
+| 2 | 2026-08-26 | 1,506 | 1,498 | 99.4688 | 8 | 16 | 0 | 0 | 0 | 0 | 0 | 1,319 | 1,322 | 176 | 0 |
 | 3 | 2026-08-26 | 20 | 20 | 100.0000 | 0 | 7 | 0 | 0 | 0 | 0 | 0 | 15 | 15 | 5 | 0 |
 | 4 | 2026-08-26 | 220 | 220 | 100.0000 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 163 | 163 | 57 | 0 |
 | 5 | 2026-08-26 | 5,280 | 5,277 | 99.9432 | 0 | 77 | 0 | 0 | 0 | 3 | 0 | 3,806 | 3,877 | 1,400 | 3 |
@@ -92,8 +92,8 @@ Currency overlays: aligned `0`, stale `0`, ahead of oracle `0`, pending `218,690
 | 45 | 2026-08-26 | 5,631 | 5,629 | 99.9645 | 0 | 186 | 0 | 0 | 0 | 2 | 47 | 3,939 | 4,062 | 1,567 | 2 |
 | 46 | 2026-08-26 | 8,335 | 8,304 | 99.6281 | 0 | 110 | 0 | 0 | 23 | 8 | 0 | 6,879 | 6,910 | 1,394 | 31 |
 | 47 | 2026-08-26 | 4,719 | 4,593 | 97.3299 | 1 | 459 | 0 | 0 | 17 | 108 | 11 | 2,374 | 3,000 | 1,593 | 125 |
-| 48 | 2026-08-26 | 10,117 | 10,007 | 98.9127 | 2 | 377 | 1,056 | 0 | 3 | 105 | 23 | 5,556 | 8,120 | 1,887 | 108 |
-| 49 | 2026-08-26 | 8,712 | 8,580 | 98.4848 | 7 | 269 | 29 | 0 | 23 | 102 | 0 | 5,226 | 6,034 | 2,546 | 125 |
+| 48 | 2026-08-26 | 10,116 | 10,007 | 98.9225 | 1 | 378 | 1,056 | 0 | 3 | 105 | 23 | 5,556 | 8,120 | 1,887 | 108 |
+| 49 | 2026-08-26 | 8,706 | 8,580 | 98.5527 | 1 | 275 | 29 | 0 | 23 | 102 | 0 | 5,226 | 6,034 | 2,546 | 125 |
 | 50 | 2026-08-26 | 3,072 | 2,997 | 97.5586 | 12 | 141 | 0 | 0 | 8 | 55 | 11 | 1,745 | 1,763 | 1,234 | 63 |
 
 ## Deterministic discrepancy sample
@@ -116,7 +116,6 @@ Currency overlays: aligned `0`, stale `0`, ahead of oracle `0`, pending `218,690
 ## Unmatched official examples
 
 - `us:cfr:2:200.506` (cfr-title-2-section-200.506)
-- `us:cfr:2:700.0` (cfr-title-2-section-700.0)
 - `us:cfr:2:910.200` (cfr-title-2-section-910.200)
 - `us:cfr:2:910.210` (cfr-title-2-section-910.210)
 - `us:cfr:2:910.230` (cfr-title-2-section-910.230)
@@ -127,6 +126,7 @@ Currency overlays: aligned `0`, stale `0`, ahead of oracle `0`, pending `218,690
 - `us:cfr:7:58.647` (cfr-title-7-section-58.647)
 - `us:cfr:7:58.652` (cfr-title-7-section-58.652)
 - `us:cfr:7:984.348` (cfr-title-7-section-984.348)
+- `us:cfr:7:984.349` (cfr-title-7-section-984.349)
 
 ## Dataset-only examples
 

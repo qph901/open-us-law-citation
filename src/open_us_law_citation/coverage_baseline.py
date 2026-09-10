@@ -87,6 +87,23 @@ _ECFR_TITLE_RE = re.compile(r"title[-_ ]*0*(\d+)", re.I)
 _ECFR_RESERVED_RE = re.compile(
     r"[\[\]{}]\s*\breserved\b|\breserved\b\s*[\]}]", re.I
 )
+# Sometimes the marker lands in the BODY instead, because eCFR emitted a degenerate <HEAD>
+# holding only the section number and pushed the whole heading line down. 49 CFR 1542.5 has
+# `<HEAD>§ 1542.5</HEAD>` and the body `§ 1542.5   [Reserved]`; 2 CFR 700.0 has a proper
+# heading ("Acronyms.") and a body of just `[Reserved]`. All 8 such sections in the pinned
+# edition were scored `missing` -- reported as absent law when the official source says the
+# opposite.
+#
+# This must FULL-match the stripped body, not search it. A search would swallow any section
+# whose text merely contains a reserved SUBSECTION -- "(a) [Reserved] (b) The Administrator
+# shall..." is a section full of law, and there are thousands of them. Requiring that the
+# entire body be the marker (optionally prefixed by the section number the degenerate head
+# duplicated) matches exactly those 8 and nothing else across all 49 titles.
+_ECFR_RESERVED_BODY_RE = re.compile(
+    r"(?:\u00a7{1,2}\s*)?[\dA-Za-z.\-]*(?:\s*-\s*[\dA-Za-z.\-]+)?\s*"
+    r"\[\s*reserved\s*\]\.?",
+    re.I,
+)
 # The first bounded digit run in a USLM <docNumber>. Named rather than inline so it is
 # visible to a pattern survey and testable on its own; its result is range-checked.
 _USLM_DOCNUMBER_RE = re.compile(r"\b(\d+)\b")
@@ -818,14 +835,15 @@ def render_markdown(baseline: CoverageBaseline, *, example_limit: int = 12) -> s
         "element's own subtree carries no text.",
         "",
         "`missing` is a real gap and is never explained away here. At the CFR "
-        "2026-08-26 edition its 374 sections are: 289 bare cross-reference stubs "
-        "(`See § 1000.3.`), 286 of them in title 7 and 284 of those in the federal milk "
-        "marketing orders (parts 1000-1199), where the snapshot carries the referenced "
-        "part 1000 in full but none of the sections that incorporate it; 76 sections of "
-        "substantive text spread across 15 titles; and 9 whose official body is an eCFR "
-        "amendment banner alone. An incorporation by reference is operative law, so those "
-        "stubs stay `missing` rather than becoming a stratum -- see "
-        "`COV-1A_status.md`.",
+        "2026-08-26 edition all 366 are accounted for: **291** are bare cross-reference "
+        "stubs (`See § 1000.3.`), 284 of them in the federal milk marketing orders (title "
+        "7, parts 1000-1199), where the snapshot carries the referenced part 1000 in full "
+        "but none of the sections that incorporate it; **36** sit in two parts the "
+        "snapshot carries under an older numbering (14 CFR 1216, 50 CFR 20); **15** are "
+        "terse plain-language answers (`No.`, `60 days.`); **9** have an eCFR amendment "
+        "banner as their whole body; and **15** are substantive text with no explanation "
+        "found. An incorporation by reference is operative law, so the stubs stay "
+        "`missing` rather than becoming a stratum -- see `COV-1A_status.md`.",
         "",
         "## Totals",
         "",
@@ -1209,7 +1227,10 @@ def _ecfr_provisions(
             continue
         head = _direct_child(element, "head")
         head_text = "".join(head.itertext()) if head is not None else ""
-        reserved = bool(_ECFR_RESERVED_RE.search(head_text))
+        body_text = _flatten_xml_text_excluding(element, head)
+        reserved = bool(_ECFR_RESERVED_RE.search(head_text)) or bool(
+            _ECFR_RESERVED_BODY_RE.fullmatch(body_text.strip())
+        )
         # The section number is the `N` attribute, full stop. It is present on 100% of
         # section elements in the staged 2026-08-26 edition (54,129 of 54,129 across
         # titles 1-16), and it is authoritative.
@@ -1241,7 +1262,7 @@ def _ecfr_provisions(
             # The heading is excluded from the operative text (see the helper): it is
             # metadata, and the dataset's `text` column starts at the body, so including
             # it would guarantee a text mismatch on every single provision.
-            text=_flatten_xml_text_excluding(element, head),
+            text=body_text,
             reserved=reserved,
         )
 
