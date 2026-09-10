@@ -78,6 +78,11 @@ class ArtifactType(StrEnum):
     # is a standalone query. Resolution to a target ``legal_id`` is a separate artifact
     # (M3), never folded in here.
     REFERENCE_MENTION = "reference_mention"
+    # A WITHIN-record text conclusion (repeated spans today). Deliberately not a
+    # ``quality_annotation``: that type is a cross-record conclusion whose provenance
+    # must be exactly ``[scope, target]`` so a sibling-set change re-hashes it. This
+    # one depends on no other row and carries exactly one edge, its own record.
+    TEXT_INTEGRITY_ANNOTATION = "text_integrity_annotation"
 
 
 _EnumT = TypeVar("_EnumT", bound=StrEnum)

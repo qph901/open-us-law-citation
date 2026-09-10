@@ -95,6 +95,17 @@ from .quality import (
     detect_duplicate_rows,
     is_duplicate_row,
 )
+from .text_integrity import (
+    MAX_REPEAT_LENGTH,
+    MIN_REPEAT_LENGTH,
+    RepeatedSpan,
+    TextIntegrityAnnotation,
+    TextIntegrityFlag,
+    annotate_many,
+    annotate_text_integrity,
+    detect_repeated_spans,
+    has_repeated_span,
+)
 
 __all__ = [
     # provenance
@@ -145,6 +156,16 @@ __all__ = [
     "QualityStatus",
     "detect_duplicate_rows",
     "is_duplicate_row",
+    # within-record text integrity (repeated spans)
+    "MAX_REPEAT_LENGTH",
+    "MIN_REPEAT_LENGTH",
+    "RepeatedSpan",
+    "TextIntegrityAnnotation",
+    "TextIntegrityFlag",
+    "annotate_many",
+    "annotate_text_integrity",
+    "detect_repeated_spans",
+    "has_repeated_span",
     # assembly
     "AssemblyIdentityAssociation",
     "AssemblyStatus",
